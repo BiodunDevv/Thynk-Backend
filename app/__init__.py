@@ -1,0 +1,1 @@
+"""Thynk backend application package."""

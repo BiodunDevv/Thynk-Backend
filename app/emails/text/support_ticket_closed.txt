@@ -1,0 +1,3 @@
+Hello {{ name }},
+
+Your Thynk ticket {{ ticket_number }} was closed.

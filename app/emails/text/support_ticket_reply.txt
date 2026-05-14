@@ -1,0 +1,4 @@
+Hello {{ name }},
+
+There is a new reply on ticket {{ ticket_number }}.
+{{ reply_preview }}

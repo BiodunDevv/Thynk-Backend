@@ -1,0 +1,3 @@
+Hello {{ name }},
+
+We could not process your Thynk payment. Please update your payment method or try again.

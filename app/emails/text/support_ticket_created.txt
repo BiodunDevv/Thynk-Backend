@@ -1,0 +1,3 @@
+Hello {{ name }},
+
+Your Thynk support ticket {{ ticket_number }} has been created.

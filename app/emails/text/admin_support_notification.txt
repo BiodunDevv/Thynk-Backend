@@ -1,0 +1,1 @@
+New Thynk support activity for ticket {{ ticket_number }}: {{ subject }}
