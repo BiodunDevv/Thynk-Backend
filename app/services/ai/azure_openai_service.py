@@ -7,7 +7,12 @@ from app.services.ai.base import AIProviderBase
 
 
 class AzureOpenAIService(AIProviderBase):
-    async def generate_prompt(self, prompt: str) -> dict:
+    async def generate_prompt(
+        self,
+        prompt: str,
+        images: list[dict] | None = None,
+        system_prompt: str | None = None,
+    ) -> dict:
         settings = get_settings()
         if not settings.azure_openai_api_key or not settings.azure_openai_endpoint:
             return {
@@ -22,13 +27,26 @@ class AzureOpenAIService(AIProviderBase):
             f"{settings.azure_openai_deployment_name}/chat/completions"
         )
         params = {"api-version": settings.azure_openai_api_version}
+        user_content: list[dict] = [{"type": "text", "text": prompt}]
+        for image in images or []:
+            user_content.append(
+                {
+                    "type": "image_url",
+                    "image_url": {
+                        "url": image["image_url"],
+                        "detail": image.get("detail", "auto"),
+                    },
+                }
+            )
+
         payload = {
             "messages": [
                 {
                     "role": "system",
-                    "content": "You are Thynk's AI prompt enhancement engine. Return polished, high-quality prompt output.",
+                    "content": system_prompt
+                    or "You are Thynk's AI prompt enhancement engine. Return polished, high-quality prompt output.",
                 },
-                {"role": "user", "content": prompt},
+                {"role": "user", "content": user_content},
             ],
             "max_tokens": settings.azure_openai_max_tokens,
             "temperature": 0.7,

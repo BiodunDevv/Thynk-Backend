@@ -8,5 +8,10 @@ class StripeProvider(PaymentProviderBase):
     async def verify_payment(self, reference: str) -> dict:
         return {"message": "Stripe provider scaffolded for future implementation.", "reference": reference}
 
-    async def handle_webhook(self, payload: dict, signature: str | None = None) -> dict:
+    async def handle_webhook(
+        self,
+        payload: dict,
+        signature: str | None = None,
+        raw_body: bytes | None = None,
+    ) -> dict:
         return {"processed": False, "provider": "stripe", "payload": payload}

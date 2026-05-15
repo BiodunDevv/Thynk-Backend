@@ -3,7 +3,12 @@ from abc import ABC, abstractmethod
 
 class AIProviderBase(ABC):
     @abstractmethod
-    async def generate_prompt(self, prompt: str) -> dict:
+    async def generate_prompt(
+        self,
+        prompt: str,
+        images: list[dict] | None = None,
+        system_prompt: str | None = None,
+    ) -> dict:
         raise NotImplementedError
 
 

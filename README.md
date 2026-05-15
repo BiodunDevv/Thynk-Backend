@@ -21,6 +21,12 @@ Production-ready FastAPI backend for **Thynk**, an AI-powered prompt generation 
 3. Install dependencies
 4. Run `uvicorn app.main:app --reload`
 
+Local backend URL:
+
+```text
+http://127.0.0.1:8000
+```
+
 ### Auto-reload dev server
 
 For local development with automatic restart when files change, run:
@@ -30,6 +36,29 @@ python3 dev_server.py
 ```
 
 This watches the `app/` folder and reloads the FastAPI server automatically.
+
+## Local frontend env
+
+If your Next.js PWA frontend needs a local env file, use the example in:
+
+- [.env.web.example](/Users/mac/Desktop/Thynk%20FullStack/Thynk-backend/.env.web.example)
+
+Suggested local frontend values:
+
+```env
+NEXT_PUBLIC_APP_NAME=Thynk
+NEXT_PUBLIC_API_BASE_URL=http://127.0.0.1:8000
+NEXT_PUBLIC_API_V1_PREFIX=/api/v1
+NEXT_PUBLIC_SITE_URL=http://127.0.0.1:3000
+```
+
+That matches the local backend server output:
+
+```text
+INFO:     Uvicorn running on http://127.0.0.1:8000
+```
+
+and the backend CORS settings now allow the common local Next.js origins on `127.0.0.1:3000`, `localhost:3000`, `127.0.0.1:3001`, and `localhost:3001`.
 
 ## Hosting posture
 

@@ -44,7 +44,6 @@ class Settings(BaseSettings):
     azure_openai_max_tokens: int = Field(default=1600, alias="AZURE_OPENAI_MAX_TOKENS")
     paystack_secret_key: str = Field(default="", alias="PAYSTACK_SECRET_KEY")
     paystack_public_key: str = Field(default="", alias="PAYSTACK_PUBLIC_KEY")
-    paystack_webhook_secret: str = Field(default="", alias="PAYSTACK_WEBHOOK_SECRET")
     paystack_base_url: str = Field(default="https://api.paystack.co", alias="PAYSTACK_BASE_URL")
     stripe_secret_key: str = Field(default="", alias="STRIPE_SECRET_KEY")
     stripe_webhook_secret: str = Field(default="", alias="STRIPE_WEBHOOK_SECRET")
@@ -61,6 +60,22 @@ class Settings(BaseSettings):
     @property
     def cors_origins(self) -> list[str]:
         return [origin.strip() for origin in self.allowed_origins.split(",") if origin.strip()]
+
+    @property
+    def api_base_url(self) -> str:
+        return self.production_server_url.rstrip("/")
+
+    @property
+    def paystack_webhook_url(self) -> str:
+        return f"{self.api_base_url}{self.api_v1_prefix}/payments/webhook/paystack"
+
+    @property
+    def stripe_webhook_url(self) -> str:
+        return f"{self.api_base_url}{self.api_v1_prefix}/payments/webhook/stripe"
+
+    @property
+    def default_payment_callback_url(self) -> str:
+        return f"{self.frontend_url.rstrip('/')}/settings?tab=billing&payment=return"
 
 
 @lru_cache

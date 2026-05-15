@@ -11,7 +11,7 @@ from app.api.v1.auth.schemas import (
     ResetPasswordRequest,
 )
 from app.core.config import get_settings
-from app.core.constants import OtpPurpose, SubscriptionStatus
+from app.core.constants import OtpPurpose, SubscriptionStatus, UserRole
 from app.core.error_codes import ErrorCodes
 from app.core.exceptions import AppException
 from app.core.security import decode_token, hash_password, hash_token, verify_password
@@ -21,7 +21,7 @@ from app.repositories.user_repository import UserRepository
 from app.services.auth.otp_service import OTPService
 from app.services.auth.token_service import TokenService
 from app.services.email.email_service import EmailService
-from app.utils.datetime import utc_now
+from app.utils.datetime import ensure_utc, utc_now
 from app.utils.validators import normalize_email
 
 user_repo = UserRepository()
@@ -54,13 +54,19 @@ async def register_user(payload: RegisterRequest) -> dict:
 
 async def verify_email(payload: OTPRequest) -> dict:
     email = normalize_email(payload.email)
-    otp = await OTPCode.find_one(OTPCode.email == email, OTPCode.purpose == OtpPurpose.VERIFY_EMAIL, OTPCode.is_used == False)
+    code_hash = otp_service.hash_code(payload.code)
+    # Find the most recent unused OTP that matches the submitted code
+    otp = await OTPCode.find_one(
+        OTPCode.email == email,
+        OTPCode.purpose == OtpPurpose.VERIFY_EMAIL,
+        OTPCode.is_used == False,
+        OTPCode.code_hash == code_hash,
+        sort=[("created_at", -1)],
+    )
     if not otp:
         raise AppException(400, "Invalid verification code.", ErrorCodes.OTP_INVALID)
-    if otp.expires_at < utc_now():
+    if ensure_utc(otp.expires_at) < utc_now():
         raise AppException(400, "Verification code has expired.", ErrorCodes.OTP_EXPIRED)
-    if otp.code_hash != otp_service.hash_code(payload.code):
-        raise AppException(400, "Invalid verification code.", ErrorCodes.OTP_INVALID)
     user = await user_repo.get_by_email(email)
     if not user:
         raise AppException(404, "User not found.", ErrorCodes.USER_NOT_FOUND)
@@ -68,7 +74,10 @@ async def verify_email(payload: OTPRequest) -> dict:
     await user.save()
     otp.is_used = True
     await otp.save()
-    await email_service.send_welcome_email(user.email, user.full_name)
+    try:
+        await email_service.send_welcome_email(user.email, user.full_name)
+    except Exception:
+        pass  # welcome email failure must never block verification
     return {"user": to_user_response(user)}
 
 
@@ -87,8 +96,39 @@ async def login_user(payload: LoginRequest) -> dict:
     settings = get_settings()
     if not user or not verify_password(payload.password, user.password_hash):
         raise AppException(401, "Invalid email or password.", ErrorCodes.AUTH_INVALID_CREDENTIALS)
+    if user.role == UserRole.SUPER_ADMIN:
+        raise AppException(403, "Admin accounts must sign in through the admin portal.", ErrorCodes.AUTH_ACCOUNT_DISABLED)
     if not user.is_verified:
-        raise AppException(403, "Please verify your email before logging in.", ErrorCodes.AUTH_EMAIL_NOT_VERIFIED)
+        # Auto-resend verification code so the user can verify immediately
+        try:
+            code = otp_service.generate_code()
+            otp = OTPCode(email=user.email, code_hash=otp_service.hash_code(code), purpose=OtpPurpose.VERIFY_EMAIL, expires_at=utc_now() + timedelta(minutes=get_settings().otp_expire_minutes))
+            await otp.insert()
+            await email_service.send_verification_code(user.email, user.full_name, code)
+        except Exception:
+            pass
+        raise AppException(403, "Please verify your email to continue. We just resent your verification code.", ErrorCodes.AUTH_EMAIL_NOT_VERIFIED)
+    if not user.is_active:
+        raise AppException(403, "Account is disabled.", ErrorCodes.AUTH_ACCOUNT_DISABLED)
+    access_token = token_service.create_access_token(user.id)
+    refresh_token, refresh_hash = token_service.create_refresh_token(user.id)
+    user.refresh_token_hash = refresh_hash
+    await user.save()
+    return {
+        "tokens": {"access_token": access_token, "refresh_token": refresh_token, "token_type": "bearer"},
+        "user": to_user_response(user),
+        "role": user.role.value,
+        "plan": {"plan_id": user.current_plan_id},
+        "subscription_status": user.subscription_status.value,
+    }
+
+
+async def admin_login(payload: LoginRequest) -> dict:
+    user = await user_repo.get_by_email(normalize_email(payload.email))
+    if not user or not verify_password(payload.password, user.password_hash):
+        raise AppException(401, "Invalid email or password.", ErrorCodes.AUTH_INVALID_CREDENTIALS)
+    if user.role != UserRole.SUPER_ADMIN:
+        raise AppException(403, "Access denied. This portal is for administrators only.", ErrorCodes.AUTH_ACCOUNT_DISABLED)
     if not user.is_active:
         raise AppException(403, "Account is disabled.", ErrorCodes.AUTH_ACCOUNT_DISABLED)
     access_token = token_service.create_access_token(user.id)
@@ -133,10 +173,18 @@ async def request_password_reset(payload: EmailOnlyRequest) -> None:
 
 
 async def verify_reset_code(payload: OTPRequest) -> None:
-    otp = await OTPCode.find_one(OTPCode.email == normalize_email(payload.email), OTPCode.purpose == OtpPurpose.RESET_PASSWORD, OTPCode.is_used == False)
-    if not otp or otp.code_hash != otp_service.hash_code(payload.code):
+    email = normalize_email(payload.email)
+    code_hash = otp_service.hash_code(payload.code)
+    otp = await OTPCode.find_one(
+        OTPCode.email == email,
+        OTPCode.purpose == OtpPurpose.RESET_PASSWORD,
+        OTPCode.is_used == False,
+        OTPCode.code_hash == code_hash,
+        sort=[("created_at", -1)],
+    )
+    if not otp:
         raise AppException(400, "Invalid reset code.", ErrorCodes.OTP_INVALID)
-    if otp.expires_at < utc_now():
+    if ensure_utc(otp.expires_at) < utc_now():
         raise AppException(400, "Reset code has expired.", ErrorCodes.OTP_EXPIRED)
 
 

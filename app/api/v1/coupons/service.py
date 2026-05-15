@@ -3,7 +3,7 @@ from app.core.error_codes import ErrorCodes
 from app.core.exceptions import AppException
 from app.models.coupon import Coupon, CouponRedemption
 from app.models.user import User
-from app.utils.datetime import utc_now
+from app.utils.datetime import ensure_utc, utc_now
 
 
 async def create_coupon(admin_id: str, payload: CouponCreateRequest) -> CouponResponse:
@@ -24,7 +24,9 @@ async def validate_coupon(user: User, payload: CouponValidateRequest) -> dict:
     if not coupon.is_active:
         raise AppException(400, "Coupon is inactive.", ErrorCodes.COUPON_INACTIVE)
     now = utc_now()
-    if coupon.valid_from and coupon.valid_from > now or coupon.valid_until and coupon.valid_until < now:
+    valid_from = ensure_utc(coupon.valid_from) if coupon.valid_from else None
+    valid_until = ensure_utc(coupon.valid_until) if coupon.valid_until else None
+    if (valid_from and valid_from > now) or (valid_until and valid_until < now):
         raise AppException(400, "Coupon has expired.", ErrorCodes.COUPON_EXPIRED)
     if coupon.max_redemptions is not None and coupon.redeemed_count >= coupon.max_redemptions:
         raise AppException(400, "Coupon usage limit reached.", ErrorCodes.COUPON_USAGE_LIMIT_REACHED)

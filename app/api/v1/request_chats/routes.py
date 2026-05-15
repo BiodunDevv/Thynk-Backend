@@ -5,10 +5,11 @@ from app.api.v1.request_chats.schemas import (
     ReportChatRequest,
     RequestChatCreateRequest,
     RequestChatMessagePayload,
+    RequestChatRegenerateRequest,
     RequestChatResponse,
     RequestChatUpdateRequest,
 )
-from app.api.v1.request_chats.service import add_message, create_chat, delete_chat, favorite_chat, get_chat, list_chats, report_chat, update_chat
+from app.api.v1.request_chats.service import add_message, create_chat, delete_chat, favorite_chat, generate_final_prompt, get_chat, list_chats, regenerate_prompt, report_chat, update_chat
 from app.core.response import SuccessResponse
 from app.models.user import User
 
@@ -49,6 +50,16 @@ async def remove_chat(chat_id: str, user: User = Depends(get_current_user)):
 @router.post("/{chat_id}/favorite", response_model=SuccessResponse[RequestChatResponse], summary="Favorite request chat", description="Marks or unmarks a request chat as favorite.")
 async def toggle_favorite(chat_id: str, user: User = Depends(get_current_user)):
     return SuccessResponse(message="Request chat favorite updated successfully.", data=await favorite_chat(user, chat_id))
+
+
+@router.post("/{chat_id}/generate", response_model=SuccessResponse[RequestChatResponse], summary="Generate final prompt", description="Generates the final polished prompt from the conversation history.")
+async def generate_final(chat_id: str, user: User = Depends(get_current_user)):
+    return SuccessResponse(message="Final prompt generated successfully.", data=await generate_final_prompt(user, chat_id))
+
+
+@router.post("/{chat_id}/regenerate", response_model=SuccessResponse[RequestChatResponse], summary="Regenerate final prompt", description="Generates a new variation of the final prompt, optionally guided by a variation hint.")
+async def regenerate_final(chat_id: str, payload: RequestChatRegenerateRequest, user: User = Depends(get_current_user)):
+    return SuccessResponse(message="Prompt regenerated successfully.", data=await regenerate_prompt(user, chat_id, payload.variation_hint))
 
 
 @router.post("/{chat_id}/report", response_model=SuccessResponse[RequestChatResponse], summary="Report bad AI response", description="Reports a request chat for admin review.")

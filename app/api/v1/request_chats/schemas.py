@@ -25,6 +25,10 @@ class ReportChatRequest(BaseModel):
     reason: str = Field(..., min_length=3)
 
 
+class RequestChatRegenerateRequest(BaseModel):
+    variation_hint: str | None = None
+
+
 class RequestChatMessageResponse(BaseModel):
     id: str
     role: str

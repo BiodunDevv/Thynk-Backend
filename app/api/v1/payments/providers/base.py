@@ -11,7 +11,12 @@ class PaymentProviderBase(ABC):
         raise NotImplementedError
 
     @abstractmethod
-    async def handle_webhook(self, payload: dict, signature: str | None = None) -> dict:
+    async def handle_webhook(
+        self,
+        payload: dict,
+        signature: str | None = None,
+        raw_body: bytes | None = None,
+    ) -> dict:
         raise NotImplementedError
 
     async def create_customer(self, payload: dict) -> dict:
