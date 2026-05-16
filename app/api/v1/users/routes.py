@@ -10,12 +10,17 @@ from app.models.user import User
 router = APIRouter(prefix="/users", tags=["Users", "Profile"])
 
 
-@router.get("/me", response_model=SuccessResponse[UserResponse], summary="Get current user profile", description="Returns the logged-in user's profile.")
+@router.get("/me", response_model=SuccessResponse[UserResponse], response_model_exclude_none=True, summary="Get current user profile", description="Returns the logged-in user's profile.")
 async def read_profile(user: User = Depends(get_current_user)):
     return SuccessResponse(message="Profile fetched successfully.", data=await get_profile(user))
 
 
-@router.patch("/me", response_model=SuccessResponse[UserResponse], summary="Update profile", description="Updates the logged-in user's profile.")
+@router.get("/profile", response_model=SuccessResponse[UserResponse], response_model_exclude_none=True, summary="Get current user profile", description="Returns the logged-in user's profile using a cleaner frontend-friendly path.")
+async def read_profile_alias(user: User = Depends(get_current_user)):
+    return SuccessResponse(message="Profile fetched successfully.", data=await get_profile(user))
+
+
+@router.patch("/me", response_model=SuccessResponse[UserResponse], response_model_exclude_none=True, summary="Update profile", description="Updates the logged-in user's profile.")
 async def patch_profile(payload: UpdateProfileRequest, user: User = Depends(get_current_user)):
     return SuccessResponse(message="Profile updated successfully.", data=await update_profile(user, payload))
 

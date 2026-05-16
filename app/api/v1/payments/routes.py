@@ -31,7 +31,7 @@ async def start_payment(payload: InitializePaymentRequest, user: User = Depends(
     return SuccessResponse(message="Payment initialized successfully.", data=await initialize_payment(user, payload))
 
 
-@router.get("/verify/{reference}", response_model=SuccessResponse[PaymentVerificationResponse], summary="Verify payment", description="Verifies a payment reference with the configured provider and returns normalized billing state.")
+@router.get("/verify/{reference}", response_model=SuccessResponse[PaymentVerificationResponse], response_model_exclude_none=True, summary="Verify payment", description="Verifies a payment reference with the configured provider and returns normalized billing state.")
 async def confirm_payment(reference: str, user: User = Depends(get_current_user)):
     return SuccessResponse(message="Payment verified successfully.", data=await verify_payment_for_user(user, reference))
 
@@ -77,8 +77,13 @@ async def stripe_webhook(request: Request):
     )
 
 
-@router.get("/me", response_model=SuccessResponse[list[PaymentRecordResponse]], summary="List my payments", description="Returns the logged-in user's normalized payment history.")
+@router.get("/me", response_model=SuccessResponse[list[PaymentRecordResponse]], response_model_exclude_none=True, summary="List my payments", description="Returns the logged-in user's normalized payment history.")
 async def list_my_payments(user: User = Depends(get_current_user)):
+    return SuccessResponse(message="Payments fetched successfully.", data=await my_payments(user))
+
+
+@router.get("/history", response_model=SuccessResponse[list[PaymentRecordResponse]], response_model_exclude_none=True, summary="List payment history", description="Returns the logged-in user's normalized payment history using a cleaner frontend-friendly path.")
+async def payment_history(user: User = Depends(get_current_user)):
     return SuccessResponse(message="Payments fetched successfully.", data=await my_payments(user))
 
 

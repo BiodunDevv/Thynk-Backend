@@ -14,6 +14,19 @@ def message_image_urls(message: RequestChatMessage) -> list[str]:
     return []
 
 
+def collect_all_image_urls(chat: RequestChat) -> list[str]:
+    """Return all image URLs from every user message in the chat, deduped and ordered."""
+    seen: set[str] = set()
+    result: list[str] = []
+    for message in chat.messages:
+        if message.role == "user":
+            for url in message_image_urls(message):
+                if url not in seen:
+                    seen.add(url)
+                    result.append(url)
+    return result
+
+
 def build_chat_state(chat: RequestChat) -> dict[str, Any]:
     user_messages = [message for message in chat.messages if message.role == "user"]
     latest_user_message = user_messages[-1] if user_messages else None
@@ -21,6 +34,16 @@ def build_chat_state(chat: RequestChat) -> dict[str, Any]:
     clarification_turns = [
         message for message in chat.messages if message.metadata.get("type") == "clarification"
     ]
+    all_image_urls = collect_all_image_urls(chat)
+    deep_thinking = next(
+        (
+            value
+            for message in reversed(chat.messages)
+            for value in [message.metadata.get("deep_thinking")]
+            if isinstance(value, bool)
+        ),
+        False,
+    )
 
     return {
         "chat_id": chat.id,
@@ -29,14 +52,16 @@ def build_chat_state(chat: RequestChat) -> dict[str, Any]:
         "source": chat.source.value if hasattr(chat.source, "value") else str(chat.source),
         "final_prompt_count": final_prompt_count,
         "clarification_turn_count": len(clarification_turns),
-        "has_images": any(message_image_urls(message) for message in chat.messages),
+        "has_images": bool(all_image_urls),
+        "image_urls": all_image_urls,
+        "deep_thinking": deep_thinking,
         "latest_user_message": latest_user_message.content if latest_user_message else "",
         "conversation": [
             {
                 "role": message.role,
                 "content": message.content,
                 "type": message.metadata.get("type"),
-                "image_count": len(message_image_urls(message)),
+                "image_urls": message_image_urls(message),
                 "clarification_complete": message.metadata.get("clarification_complete"),
                 "next_action": message.metadata.get("next_action"),
             }
@@ -50,16 +75,24 @@ def build_generation_context(chat: RequestChat) -> str:
     user_messages = [message for message in chat.messages if message.role == "user"]
     original_request = user_messages[0].content if user_messages else ""
     latest_request = user_messages[-1].content if user_messages else ""
+    all_images = collect_all_image_urls(chat)
 
     lines: list[str] = [
         f"Chat title: {chat.title}",
         f"Category: {chat.category}",
         f"Source: {chat.source.value if hasattr(chat.source, 'value') else chat.source}",
+        f"Deep thinking mode: {'enabled' if any(isinstance(message.metadata.get('deep_thinking'), bool) and message.metadata.get('deep_thinking') for message in chat.messages) else 'disabled'}",
         "",
         "Original user request:",
         original_request,
         "",
     ]
+
+    if all_images:
+        lines.append(f"Attached images ({len(all_images)} total — analyze these for visual context):")
+        for url in all_images:
+            lines.append(f"  - {url}")
+        lines.append("")
 
     clarification_pairs = collect_clarification_pairs(chat.messages)
     if clarification_pairs:
@@ -119,12 +152,34 @@ def fallback_clarification(chat: RequestChat) -> ClarificationResult:
     clarification_turns = sum(
         1 for message in chat.messages if message.metadata.get("type") == "clarification"
     )
+    all_image_urls = collect_all_image_urls(chat)
 
     if clarification_turns >= 2 or len(user_messages) >= 3 or len(combined) > 220:
         return ClarificationResult(
             clarification_complete=True,
             next_action="ready_for_final_prompt",
             reasoning_summary="Enough context is available to generate the final prompt.",
+        )
+
+    if all_image_urls and not any(
+        keyword in combined for keyword in ("color", "colour", "palette", "style", "visual", "brand")
+    ):
+        return ClarificationResult(
+            clarification_complete=False,
+            next_action="ask_followup",
+            reasoning_summary="The uploaded image adds visual context that should be directed explicitly.",
+            questions=[
+                {
+                    "type": "single",
+                    "question": "Should the final prompt follow the uploaded image's visual style and color direction?",
+                    "options": [
+                        "Yes, use both the style and color palette",
+                        "Use the layout/style, but not the colors",
+                        "Use it only as loose inspiration",
+                        "No, ignore the image styling",
+                    ],
+                }
+            ],
         )
 
     if not any(keyword in combined for keyword in ("audience", "customer", "user", "team")):

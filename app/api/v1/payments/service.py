@@ -406,7 +406,7 @@ async def _apply_payment_transition(
         subscription=subscription_response,
         billing_state=billing_state,
         provider_status=ProviderStatusResponse.model_validate(provider_status),
-        provider_debug=provider_payload,
+        provider_debug=provider_payload or None,
         already_verified=already_verified,
     )
     logger.info(

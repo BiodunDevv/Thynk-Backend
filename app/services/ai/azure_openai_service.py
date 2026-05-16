@@ -8,6 +8,15 @@ from app.core.exceptions import AppException
 from app.services.ai.base import AIProviderBase
 from app.services.ai.clarification_types import ClarificationResult
 
+try:
+    from langchain_core.messages import HumanMessage, SystemMessage
+    from langchain_core.prompts import ChatPromptTemplate
+    from langchain_openai import AzureChatOpenAI
+
+    LANGCHAIN_AVAILABLE = True
+except ImportError:
+    LANGCHAIN_AVAILABLE = False
+
 
 class AzureOpenAIService(AIProviderBase):
     async def generate_prompt(
@@ -122,7 +131,7 @@ class AzureOpenAIService(AIProviderBase):
                 details={"provider": "azure_openai"},
             ) from exc
 
-    async def generate_clarification(self, chat_state: dict) -> dict:
+    async def generate_clarification(self, chat_state: dict, images: list[dict] | None = None) -> dict:
         settings = get_settings()
 
         if not settings.azure_openai_api_key or not settings.azure_openai_endpoint:
@@ -144,17 +153,17 @@ class AzureOpenAIService(AIProviderBase):
                 ],
             ).model_dump()
 
-        try:
-            from langchain_core.prompts import ChatPromptTemplate
-            from langchain_openai import AzureChatOpenAI
-        except ImportError:
+        if not LANGCHAIN_AVAILABLE:
             result = await self.generate_prompt(
                 prompt=json.dumps(chat_state, ensure_ascii=False, indent=2),
+                images=images,
                 system_prompt=(
                     "You are Thynk's clarification engine. Decide whether the conversation needs follow-up questions "
                     "before generating a final prompt. Return JSON only with keys: clarification_complete, next_action, "
                     "questions, reasoning_summary. If questions are needed, return 1-2 focused questions using types "
-                    "single, multi, yesno, or open."
+                    "single, multi, yesno, or open. If images are attached and the user has not specified whether to follow "
+                    "their visual style, palette, or composition, prioritize one clarification question about how the image "
+                    "should influence the final prompt."
                 ),
             )
             try:
@@ -163,11 +172,10 @@ class AzureOpenAIService(AIProviderBase):
                 return ClarificationResult(
                     clarification_complete=False,
                     next_action="ask_followup",
-                    reasoning_summary="LangChain is unavailable, so a fallback clarification response was returned.",
                     questions=[
                         {
                             "type": "open",
-                            "question": "What outcome do you want this prompt to achieve?",
+                            "question": "What result should this prompt help you produce?",
                         }
                     ],
                 ).model_dump()
@@ -189,7 +197,9 @@ class AzureOpenAIService(AIProviderBase):
                     "You are Thynk's clarification engine. Read the full chat state and decide whether "
                     "follow-up questions are still needed before generating the final prompt. "
                     "Ask at most two focused questions. Prefer structured, practical questions that reduce ambiguity. "
-                    "If enough context already exists, mark clarification_complete true and next_action ready_for_final_prompt.",
+                    "If images are attached, decide whether you still need to ask how their layout, palette, brand cues, or style "
+                    "should influence the final prompt. If enough context already exists, mark clarification_complete true "
+                    "and next_action ready_for_final_prompt.",
                 ),
                 (
                     "human",
@@ -200,9 +210,28 @@ class AzureOpenAIService(AIProviderBase):
 
         try:
             chain = prompt | structured_llm
-            result = await chain.ainvoke(
-                {"chat_state": json.dumps(chat_state, ensure_ascii=False, indent=2)}
-            )
+            chat_state_text = json.dumps(chat_state, ensure_ascii=False, indent=2)
+
+            # If images are attached, build a multimodal human message so the model can see them
+            if images:
+                system_msg = SystemMessage(content=(
+                    "You are Thynk's clarification engine. Read the full chat state and decide whether "
+                    "follow-up questions are still needed before generating the final prompt. "
+                    "Ask at most two focused questions. Prefer structured, practical questions that reduce ambiguity. "
+                    "If images are attached, decide whether you still need to ask how their layout, palette, brand cues, or style "
+                    "should influence the final prompt. If enough context already exists, mark clarification_complete true "
+                    "and next_action ready_for_final_prompt."
+                ))
+                human_content: list[dict] = [{"type": "text", "text": f"Chat state:\n{chat_state_text}"}]
+                for img in images:
+                    human_content.append({
+                        "type": "image_url",
+                        "image_url": {"url": img["image_url"], "detail": img.get("detail", "auto")},
+                    })
+                result = await structured_llm.ainvoke([system_msg, HumanMessage(content=human_content)])
+            else:
+                result = await chain.ainvoke({"chat_state": chat_state_text})
+
             if isinstance(result, ClarificationResult):
                 return result.model_dump()
             return ClarificationResult.model_validate(result).model_dump()

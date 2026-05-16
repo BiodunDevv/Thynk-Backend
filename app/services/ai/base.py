@@ -15,6 +15,7 @@ class AIProviderBase(ABC):
     async def generate_clarification(
         self,
         chat_state: dict,
+        images: list[dict] | None = None,
     ) -> dict:
         raise NotImplementedError
 

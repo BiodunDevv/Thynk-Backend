@@ -48,6 +48,11 @@ async def test_free(payload: FreeTestRequest, request: Request):
     return SuccessResponse(message="Free test completed.", data=FreeTestResponse(**result))
 
 
-@router.get("/me", response_model=SuccessResponse[list[PromptResponse]], summary="List saved prompts", description="Returns the logged-in user's saved prompts.")
+@router.get("/me", response_model=SuccessResponse[list[PromptResponse]], response_model_exclude_none=True, summary="List saved prompts", description="Returns the logged-in user's saved prompts.")
 async def my_prompts(user: User = Depends(get_current_user)):
+    return SuccessResponse(message="Prompts fetched successfully.", data=await list_prompts(user))
+
+
+@router.get("/history", response_model=SuccessResponse[list[PromptResponse]], response_model_exclude_none=True, summary="List saved prompts", description="Returns the logged-in user's saved prompts using a cleaner frontend-friendly path.")
+async def prompt_history(user: User = Depends(get_current_user)):
     return SuccessResponse(message="Prompts fetched successfully.", data=await list_prompts(user))
