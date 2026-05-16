@@ -18,6 +18,7 @@ from app.core.security import decode_token, hash_password, hash_token, verify_pa
 from app.models.otp import OTPCode
 from app.models.user import User
 from app.repositories.user_repository import UserRepository
+from app.api.v1.users.service import serialize_user_response
 from app.services.auth.otp_service import OTPService
 from app.services.auth.token_service import TokenService
 from app.services.email.email_service import EmailService
@@ -33,8 +34,8 @@ email_service = EmailService()
 notification_service = NotificationService()
 
 
-def to_user_response(user: User) -> UserResponse:
-    return UserResponse.model_validate(user.model_dump())
+async def to_user_response(user: User) -> UserResponse:
+    return await serialize_user_response(user)
 
 
 async def register_user(payload: RegisterRequest) -> dict:
@@ -52,7 +53,7 @@ async def register_user(payload: RegisterRequest) -> dict:
     otp = OTPCode(email=email, code_hash=otp_service.hash_code(code), purpose=OtpPurpose.VERIFY_EMAIL, expires_at=utc_now() + timedelta(minutes=get_settings().otp_expire_minutes))
     await otp.insert()
     await email_service.send_verification_code(user.email, user.full_name, code)
-    return {"user": to_user_response(user)}
+    return {"user": await to_user_response(user)}
 
 
 async def verify_email(payload: OTPRequest) -> dict:
@@ -90,7 +91,7 @@ async def verify_email(payload: OTPRequest) -> dict:
         data={"event": "email_verified"},
         send_push=True,
     )
-    return {"user": to_user_response(user)}
+    return {"user": await to_user_response(user)}
 
 
 async def resend_verification_code(payload: EmailOnlyRequest) -> None:
@@ -143,7 +144,7 @@ async def admin_login(payload: LoginRequest) -> dict:
     await user.save()
     return {
         "tokens": {"access_token": access_token, "refresh_token": refresh_token, "token_type": "bearer"},
-        "user": to_user_response(user),
+        "user": await to_user_response(user),
         "role": user.role.value,
         "plan": {"plan_id": user.current_plan_id},
         "subscription_status": user.subscription_status.value,
@@ -188,7 +189,7 @@ async def _build_auth_payload(user: User, access_token: str, refresh_token: str)
 
     return {
         "tokens": {"access_token": access_token, "refresh_token": refresh_token, "token_type": "bearer"},
-        "user": to_user_response(user),
+        "user": await to_user_response(user),
         "role": user.role.value,
         "plan": plan_data,
         "subscription_status": user.subscription_status.value,

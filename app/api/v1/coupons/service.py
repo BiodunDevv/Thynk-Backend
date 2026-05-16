@@ -1,4 +1,4 @@
-from app.api.v1.coupons.schemas import CouponCreateRequest, CouponResponse, CouponValidateRequest
+from app.api.v1.coupons.schemas import CouponCreateRequest, CouponResponse, CouponUpdateRequest, CouponValidateRequest
 from app.core.error_codes import ErrorCodes
 from app.core.exceptions import AppException
 from app.models.coupon import Coupon, CouponRedemption
@@ -15,6 +15,16 @@ async def create_coupon(admin_id: str, payload: CouponCreateRequest) -> CouponRe
 async def list_coupons() -> list[CouponResponse]:
     coupons = await Coupon.find_all().sort("-created_at").to_list()
     return [CouponResponse.model_validate(item.model_dump()) for item in coupons]
+
+
+async def update_coupon(coupon: Coupon, payload: CouponUpdateRequest) -> CouponResponse:
+    updates = payload.model_dump(exclude_unset=True)
+    if "applicable_plan_ids" in updates and updates["applicable_plan_ids"] is None:
+        updates["applicable_plan_ids"] = []
+    for field, value in updates.items():
+        setattr(coupon, field, value)
+    await coupon.save()
+    return CouponResponse.model_validate(coupon.model_dump())
 
 
 async def validate_coupon(user: User, payload: CouponValidateRequest) -> dict:
@@ -35,5 +45,14 @@ async def validate_coupon(user: User, payload: CouponValidateRequest) -> dict:
         raise AppException(400, "Coupon user limit reached.", ErrorCodes.COUPON_USER_LIMIT_REACHED)
     if coupon.applicable_plan_ids and payload.plan_id not in coupon.applicable_plan_ids:
         raise AppException(400, "Coupon is not applicable to this plan.", ErrorCodes.COUPON_PLAN_NOT_APPLICABLE)
+    if payload.amount < coupon.minimum_amount:
+        raise AppException(400, "Order amount is below the minimum required for this coupon.", ErrorCodes.COUPON_NOT_APPLICABLE)
     discount = payload.amount * (coupon.discount_value / 100) if coupon.discount_type.value == "percentage" else coupon.discount_value
-    return {"coupon": CouponResponse.model_validate(coupon.model_dump()), "discount_amount": discount, "final_amount": max(payload.amount - discount, 0)}
+    final_amount = max(payload.amount - discount, 0)
+    return {
+        "coupon": CouponResponse.model_validate(coupon.model_dump()),
+        "discount_amount": discount,
+        "final_amount": final_amount,
+        "currency": coupon.currency,
+        "applied": True,
+    }

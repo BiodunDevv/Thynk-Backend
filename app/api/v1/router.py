@@ -1,6 +1,5 @@
 from fastapi import APIRouter
 
-from app.api.v1.admin.request_chats.routes import router as admin_request_chat_router
 from app.api.v1.admin.routes import router as admin_router
 from app.api.v1.admin.support.routes import router as admin_support_router
 from app.api.v1.admin.users import prompts_router as admin_prompts_router
@@ -36,7 +35,6 @@ api_router.include_router(notification_router)
 api_router.include_router(support_router)
 api_router.include_router(legal_router)
 api_router.include_router(admin_router)
-api_router.include_router(admin_request_chat_router)
 api_router.include_router(admin_support_router)
 api_router.include_router(admin_payment_router)
 api_router.include_router(admin_coupon_router)

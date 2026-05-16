@@ -70,11 +70,16 @@ def _build_plan_snapshot(plan: Plan | None, payment: Payment) -> PaymentPlanSnap
     )
 
 
-def _serialize_payment_record(payment: Payment, plan: Plan | None = None) -> PaymentRecordResponse:
+def _serialize_payment_record(payment: Payment, plan: Plan | None = None, user: User | None = None) -> PaymentRecordResponse:
+    plan_snapshot = _build_plan_snapshot(plan, payment)
+    metadata = payment.metadata or {}
     return PaymentRecordResponse.model_validate(
         {
             **payment.model_dump(mode="json"),
-            "plan_snapshot": _build_plan_snapshot(plan, payment).model_dump() if _build_plan_snapshot(plan, payment) else None,
+            "plan_snapshot": plan_snapshot.model_dump() if plan_snapshot else None,
+            "user_name": (user.full_name if user else None) or _metadata_value(metadata, "user_name_snapshot"),
+            "user_email": (user.email if user else None) or _metadata_value(metadata, "user_email_snapshot"),
+            "plan_name": plan_snapshot.name if plan_snapshot else None,
         }
     )
 

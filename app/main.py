@@ -31,11 +31,14 @@ tags_metadata = [
     {"name": "Support", "description": "Endpoints for support tickets and replies."},
     {"name": "Legal", "description": "Endpoints for legal documents shown in the Thynk web application and PWA."},
     {"name": "Admin Dashboard", "description": "Super Admin dashboard metrics."},
-    {"name": "Admin Request Chats", "description": "Super Admin request chat review and template conversion operations."},
+    {"name": "Admin Users", "description": "Super Admin user lifecycle operations including profile review, moderation, support actions, and final-output inspection."},
+    {"name": "Admin Prompts", "description": "Super Admin review surface for generated end products across saved prompts and request-chat final outputs."},
+    {"name": "Admin Plans", "description": "Super Admin plan and commercial catalog management."},
     {"name": "Admin Templates", "description": "Super Admin prompt template management."},
     {"name": "Admin Coupons", "description": "Super Admin coupon management."},
     {"name": "Admin Payments", "description": "Super Admin payment review."},
     {"name": "Admin Support", "description": "Super Admin support desk operations."},
+    {"name": "System", "description": "Infrastructure health, readiness, and deployment-facing service probes."},
 ]
 
 

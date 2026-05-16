@@ -87,28 +87,46 @@ async def payment_history(user: User = Depends(get_current_user)):
     return SuccessResponse(message="Payments fetched successfully.", data=await my_payments(user))
 
 
-@admin_router.get("", response_model=SuccessResponse[list[PaymentRecordResponse]], summary="List all payments")
+@admin_router.get(
+    "",
+    response_model=SuccessResponse[list[PaymentRecordResponse]],
+    response_model_exclude_none=True,
+    summary="List all payments",
+    description="Returns normalized payment records for the admin billing console, including resolved customer labels, plan snapshots, provider references, and payment timestamps.",
+)
 async def list_all_payments(_=Depends(require_role(role="SUPER_ADMIN"))):
     from app.models.payment import Payment
     from app.models.plan import Plan
+    from app.models.user import User
     from app.api.v1.payments.service import _serialize_payment_record
 
     payments = await Payment.find_all().sort("-created_at").to_list()
     plan_ids = {payment.plan_id for payment in payments if payment.plan_id}
+    user_ids = {payment.user_id for payment in payments if payment.user_id}
     plans = [await Plan.get(plan_id) for plan_id in plan_ids]
+    users = [user for user in await User.find_all().to_list() if user.id in user_ids] if user_ids else []
     plan_map = {plan.id: plan for plan in plans if plan}
-    data = [_serialize_payment_record(item, plan_map.get(item.plan_id)) for item in payments]
+    user_map = {user.id: user for user in users}
+    data = [_serialize_payment_record(item, plan_map.get(item.plan_id), user_map.get(item.user_id)) for item in payments]
     return SuccessResponse(message="Payments fetched successfully.", data=data)
 
 
-@admin_router.get("/{payment_id}", response_model=SuccessResponse[PaymentRecordResponse], summary="Get payment by ID")
+@admin_router.get(
+    "/{payment_id}",
+    response_model=SuccessResponse[PaymentRecordResponse],
+    response_model_exclude_none=True,
+    summary="Get payment by ID",
+    description="Returns a single normalized payment record for the admin portal. The response is optimized for billing review screens and should not require reading raw provider payloads.",
+)
 async def get_payment(payment_id: str, _=Depends(require_role(role="SUPER_ADMIN"))):
     from app.models.payment import Payment
     from app.models.plan import Plan
+    from app.models.user import User
     from app.api.v1.payments.service import _serialize_payment_record
     from app.core.exceptions import AppException
     p = await Payment.get(payment_id)
     if not p:
         raise AppException(404, "Payment not found.", "NOT_FOUND")
     plan = await Plan.get(p.plan_id) if p.plan_id else None
-    return SuccessResponse(message="Payment fetched successfully.", data=_serialize_payment_record(p, plan))
+    user = await User.get(p.user_id) if p.user_id else None
+    return SuccessResponse(message="Payment fetched successfully.", data=_serialize_payment_record(p, plan, user))

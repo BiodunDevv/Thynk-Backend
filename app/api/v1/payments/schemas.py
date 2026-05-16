@@ -15,7 +15,10 @@ class InitializePaymentRequest(BaseModel):
 class PaymentResponse(BaseModel):
     id: str
     user_id: str
+    user_name: str | None = None
+    user_email: str | None = None
     plan_id: str
+    plan_name: str | None = None
     provider: str
     provider_reference: str
     amount: float

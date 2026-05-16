@@ -20,6 +20,20 @@ class CouponCreateRequest(BaseModel):
     is_active: bool = True
 
 
+class CouponUpdateRequest(BaseModel):
+    description: str | None = None
+    discount_type: CouponDiscountType | None = None
+    discount_value: float | None = None
+    currency: str | None = None
+    max_redemptions: int | None = None
+    per_user_limit: int | None = None
+    valid_from: datetime | None = None
+    valid_until: datetime | None = None
+    applicable_plan_ids: list[str] | None = None
+    minimum_amount: float | None = None
+    is_active: bool | None = None
+
+
 class CouponValidateRequest(BaseModel):
     code: str
     plan_id: str

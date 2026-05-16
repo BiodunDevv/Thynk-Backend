@@ -20,6 +20,7 @@ class UserResponse(BaseModel):
     subscription_id: str | None = None
     prompt_generation_count: int
     monthly_generation_count: int
+    credits_remaining: int = 0
 
 
 class TokenPair(BaseModel):
