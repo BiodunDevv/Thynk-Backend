@@ -1,7 +1,7 @@
 import logging
 from uuid import uuid4
 from urllib.parse import urlencode
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from app.api.v1.payments.schemas import (
     BillingStateResponse,
@@ -45,6 +45,22 @@ def _parse_datetime(value: str | None) -> datetime | None:
         return ensure_utc(datetime.fromisoformat(value))
     except (TypeError, ValueError):
         return None
+
+
+def _build_subscription_period_end(
+    billing_interval: str,
+    *,
+    starts_at: datetime,
+    carryover: timedelta | None = None,
+) -> datetime | None:
+    if billing_interval == "yearly":
+        base_period = timedelta(days=365)
+    elif billing_interval == "monthly":
+        base_period = timedelta(days=30)
+    else:
+        return None
+
+    return starts_at + base_period + (carryover or timedelta())
 
 
 def _build_payment_return_url(payment: Payment) -> str:
@@ -211,34 +227,45 @@ async def _sync_subscription_success(
     if not plan:
         raise AppException(404, "Plan not found for payment.", ErrorCodes.PLAN_NOT_FOUND)
 
-    from datetime import timedelta
-
     completed_at = _parse_datetime((payment.metadata or {}).get("payment_completed_at")) or utc_now()
     now = completed_at
-    if plan.billing_interval == "yearly":
-        period_end = now + timedelta(days=365)
-    elif plan.billing_interval == "monthly":
-        period_end = now + timedelta(days=30)
-    else:
-        period_end = None
 
     subscription = await _get_user_subscription(payment.user_id)
     subscription_was_active = bool(subscription and subscription.status == SubscriptionStatus.ACTIVE)
+    metadata = payment.metadata or {}
+    existing_sync_applied_at = _parse_datetime(metadata.get("subscription_sync_applied_at"))
+    if existing_sync_applied_at and subscription:
+        user = await User.get(payment.user_id)
+        if user:
+            user.current_plan_id = payment.plan_id
+            user.subscription_status = SubscriptionStatus.ACTIVE
+            user.subscription_id = subscription.id
+            await user.save()
+        return user, subscription, plan
+
+    carryover = timedelta()
+    if (
+        subscription
+        and subscription.status == SubscriptionStatus.ACTIVE
+        and subscription.current_period_end
+    ):
+        existing_period_end = ensure_utc(subscription.current_period_end)
+        if existing_period_end > now:
+            carryover = existing_period_end - now
+
+    period_end = _build_subscription_period_end(
+        plan.billing_interval.value if hasattr(plan.billing_interval, "value") else str(plan.billing_interval),
+        starts_at=now,
+        carryover=carryover,
+    )
+
     if subscription:
-        should_reset_period = (
-            subscription.plan_id != payment.plan_id
-            or subscription.status != SubscriptionStatus.ACTIVE
-            or not subscription.current_period_start
-            or not subscription.current_period_end
-            or (subscription.current_period_end and ensure_utc(subscription.current_period_end) <= now)
-        )
         subscription.plan_id = payment.plan_id
         subscription.status = SubscriptionStatus.ACTIVE
         subscription.provider = payment.provider
         subscription.provider_subscription_id = payment.provider_reference
-        if should_reset_period:
-            subscription.current_period_start = now
-            subscription.current_period_end = period_end
+        subscription.current_period_start = now
+        subscription.current_period_end = period_end
         subscription.cancel_at_period_end = False
         await subscription.save()
     else:
@@ -261,10 +288,11 @@ async def _sync_subscription_success(
         await user.save()
 
         payment.metadata = {
-            **(payment.metadata or {}),
+            **metadata,
             "resolved_subscription_id": subscription.id,
             "payment_completed_at": completed_at.isoformat(),
             "last_transition_source": transition_source,
+            "subscription_sync_applied_at": utc_now().isoformat(),
         }
 
         if not subscription_was_active:

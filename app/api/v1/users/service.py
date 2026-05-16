@@ -1,5 +1,6 @@
 from app.api.v1.common import UserResponse
 from app.api.v1.payments.service import reconcile_user_billing_state
+from app.models.plan import Plan
 from app.api.v1.users.schemas import UpdateProfileRequest
 from app.models.usage_credit import UsageCredit
 from app.models.user import User
@@ -22,11 +23,31 @@ async def get_remaining_credits(user_id: str) -> int:
     return total
 
 
+async def get_user_balance_summary(user: User) -> dict[str, int]:
+    plan = await Plan.get(user.current_plan_id) if user.current_plan_id else None
+    generation_limit = plan.generation_limit if plan else 5
+    if generation_limit < 0:
+        subscription_generations_remaining = 0
+    else:
+        subscription_generations_remaining = max(generation_limit - user.monthly_generation_count, 0)
+
+    granted_credits_remaining = await get_remaining_credits(user.id)
+    total_points_remaining = subscription_generations_remaining + granted_credits_remaining
+
+    return {
+        "subscription_generations_remaining": subscription_generations_remaining,
+        "granted_credits_remaining": granted_credits_remaining,
+        "total_points_remaining": total_points_remaining,
+        # Compatibility alias while the frontend transitions away from the old field.
+        "credits_remaining": total_points_remaining,
+    }
+
+
 async def serialize_user_response(user: User) -> UserResponse:
     return UserResponse.model_validate(
         {
             **user.model_dump(),
-            "credits_remaining": await get_remaining_credits(user.id),
+            **(await get_user_balance_summary(user)),
         }
     )
 

@@ -10,6 +10,7 @@ from app.core.response import SuccessResponse
 from app.models.collection import Collection
 from app.models.coupon import CouponRedemption
 from app.models.notification import Notification
+from app.models.otp import OTPCode
 from app.models.payment import Payment, PaymentWebhookEvent
 from app.models.prompt import Prompt
 from app.models.request_chat import RequestChat
@@ -22,9 +23,12 @@ from app.models.usage_credit import UsageCredit
 from app.models.user import User
 from app.services.ai.clarification_service import collect_all_image_urls
 from app.api.v1.users.service import serialize_user_response
+from app.services.notifications.notification_service import NotificationService
+from app.core.constants import NotificationType
 from app.utils.datetime import utc_now
 
 router = APIRouter(prefix="/admin/users", tags=["Admin Users"])
+notification_service = NotificationService()
 
 
 class GrantCreditsRequest(BaseModel):
@@ -167,7 +171,7 @@ async def reactivate_user(user_id: str, admin: User = Depends(require_role(role=
     "/{user_id}",
     response_model=SuccessResponse[AdminDeleteUserResponse],
     summary="Delete user account permanently",
-    description="Permanently removes a user account and deletes user-owned application records such as prompts, request chats, notifications, support tickets, credits, and subscriptions. Payment records are preserved for billing audit, and customer name/email snapshots are written onto those records before the user is removed.",
+    description="Permanently removes a user account and deletes user-owned application records including prompts, chats, payments, webhook traces, notifications, credits, subscriptions, coupon redemptions, OTP records, support history, and conversion artifacts.",
 )
 async def delete_user(user_id: str, admin: User = Depends(require_role(role="SUPER_ADMIN"))):
     if admin.id == user_id:
@@ -190,6 +194,7 @@ async def delete_user(user_id: str, admin: User = Depends(require_role(role="SUP
         "collections": 0,
         "coupon_redemptions": 0,
         "template_conversions": 0,
+        "otp_codes": 0,
     }
 
     payments = await Payment.find(Payment.user_id == user_id).to_list()
@@ -241,7 +246,29 @@ async def delete_user(user_id: str, admin: User = Depends(require_role(role="SUP
         await subscription.delete()
     deleted_counts["subscriptions"] = len(subscriptions)
 
-    tickets = await SupportTicket.find(SupportTicket.user_id == user_id).to_list()
+    coupon_redemptions = await CouponRedemption.find(CouponRedemption.user_id == user_id).to_list()
+    for redemption in coupon_redemptions:
+        await redemption.delete()
+    deleted_counts["coupon_redemptions"] = len(coupon_redemptions)
+
+    template_conversions = await TemplateConversion.find(TemplateConversion.source_user_id == user_id).to_list()
+    for conversion in template_conversions:
+        await conversion.delete()
+    deleted_counts["template_conversions"] = len(template_conversions)
+
+    otp_codes = await OTPCode.find(OTPCode.email == user.email).to_list()
+    for otp_code in otp_codes:
+        await otp_code.delete()
+    deleted_counts["otp_codes"] = len(otp_codes)
+
+    tickets = await SupportTicket.find(
+        {
+            "$or": [
+                {"user_id": user_id},
+                {"email": user.email},
+            ]
+        }
+    ).to_list()
     ticket_ids = [ticket.id for ticket in tickets]
     if ticket_ids:
         messages = await SupportMessage.find({"ticket_id": {"$in": ticket_ids}}).to_list()
@@ -278,6 +305,19 @@ async def grant_credits(user_id: str, payload: GrantCreditsRequest, admin: User 
         raise AppException(404, "User not found.", ErrorCodes.USER_NOT_FOUND)
     credit = UsageCredit(user_id=user_id, source="admin_grant", amount=payload.amount, remaining=payload.amount, created_by_admin_id=admin.id)
     await credit.insert()
+    await notification_service.create_notification(
+        user,
+        "Points added to your account",
+        f"{payload.amount:,} points were added to your Thynk account by the support team.",
+        NotificationType.ACCOUNT,
+        data={
+            "event": "admin_points_granted",
+            "amount": payload.amount,
+            "reason": payload.reason,
+            "granted_by_admin_id": admin.id,
+        },
+        send_push=True,
+    )
     return SuccessResponse(message="AI credits granted successfully.", data={"user_id": user_id, "credits_added": credit.amount, "remaining_credits": credit.remaining})
 
 
@@ -296,6 +336,19 @@ async def grant_prompts(user_id: str, payload: GrantPromptsRequest, admin: User 
     user = await User.get(user_id)
     if not user or user.role != UserRole.USER:
         raise AppException(404, "User not found.", ErrorCodes.USER_NOT_FOUND)
+    await notification_service.create_notification(
+        user,
+        "Extra prompt generations added",
+        f"{payload.amount:,} extra prompt generations were added to your account.",
+        NotificationType.USAGE,
+        data={
+            "event": "admin_prompt_grant",
+            "amount": payload.amount,
+            "reason": payload.reason,
+            "granted_by_admin_id": admin.id,
+        },
+        send_push=True,
+    )
     credit = UsageCredit(user_id=user_id, source="admin_grant", amount=payload.amount, remaining=payload.amount, created_by_admin_id=admin.id)
     await credit.insert()
     return SuccessResponse(

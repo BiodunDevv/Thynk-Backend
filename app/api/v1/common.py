@@ -20,6 +20,9 @@ class UserResponse(BaseModel):
     subscription_id: str | None = None
     prompt_generation_count: int
     monthly_generation_count: int
+    subscription_generations_remaining: int = 0
+    granted_credits_remaining: int = 0
+    total_points_remaining: int = 0
     credits_remaining: int = 0
 
 

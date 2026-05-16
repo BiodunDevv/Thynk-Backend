@@ -2,7 +2,15 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from app.api.v1.payments.service import _build_payment_return_url, _build_plan_snapshot, _extract_provider_status, verify_payment_for_user
+from datetime import datetime, timedelta, timezone
+
+from app.api.v1.payments.service import (
+    _build_payment_return_url,
+    _build_plan_snapshot,
+    _build_subscription_period_end,
+    _extract_provider_status,
+    verify_payment_for_user,
+)
 from app.core.exceptions import AppException
 from app.models.payment import Payment
 from app.models.plan import Plan
@@ -108,6 +116,15 @@ def test_build_payment_return_url_preserves_existing_query_params():
     assert "reference=pay_ref_1" in url
     assert "payment=return" in url
     assert "tab=billing" in url
+
+
+def test_build_subscription_period_end_carries_forward_remaining_time():
+    starts_at = datetime(2026, 5, 16, tzinfo=timezone.utc)
+    carryover = timedelta(days=12)
+
+    period_end = _build_subscription_period_end("yearly", starts_at=starts_at, carryover=carryover)
+
+    assert period_end == starts_at + timedelta(days=377)
 
 
 @pytest.mark.asyncio
