@@ -13,6 +13,7 @@ from app.core.exceptions import AppException
 from app.models.prompt import Prompt
 from app.models.user import User
 from app.services.ai.base import get_ai_service
+from app.services.ai.clarification_types import ClarificationResult
 from app.services.ai.prompt_builder import (
     build_enhancement_instruction,
     build_generation_instruction_from_enhanced,
@@ -113,18 +114,44 @@ async def generate_prompt(user: User, payload: GeneratePromptRequest) -> PromptG
 
 async def free_test_generate(prompt: str, client_ip: str) -> dict:
     if client_ip in _free_test_used:
-        raise AppException(429, "You have used your free test. Sign up for 5 free generations per day.", ErrorCodes.PROMPT_LIMIT_REACHED)
+        raise AppException(429, "You have used your free test. Sign up for 5 free generations per week.", ErrorCodes.PROMPT_LIMIT_REACHED)
     _free_test_used.add(client_ip)
     ai_service = get_ai_service()
-    result = await ai_service.generate_prompt(
-        prompt,
-        system_prompt=(
-            "You are Thynk's AI assistant. A user is testing the platform. "
-            "Ask them 2 focused clarifying questions about their prompt idea to help them understand the value of Thynk. "
-            "Be warm, concise, and professional."
-        ),
+    clarification = ClarificationResult.model_validate(
+        await ai_service.generate_clarification(
+            {
+                "chat_id": "free-test",
+                "title": "Free test clarification",
+                "category": "general",
+                "source": "assistant_chat",
+                "final_prompt_count": 0,
+                "clarification_turn_count": 0,
+                "has_images": False,
+                "latest_user_message": prompt.strip(),
+                "conversation": [
+                    {
+                        "role": "user",
+                        "content": prompt.strip(),
+                        "type": None,
+                        "image_count": 0,
+                        "clarification_complete": False,
+                        "next_action": None,
+                    }
+                ],
+            }
+        )
     )
-    return {"content": result.get("content", ""), "used": True}
+    if clarification.questions:
+        content = "\n".join(
+            f"{index + 1}. {question.question}"
+            for index, question in enumerate(clarification.questions)
+        )
+    else:
+        content = (
+            clarification.reasoning_summary
+            or "Thynk has enough context to help you generate a polished prompt."
+        )
+    return {"content": content, "used": True}
 
 
 async def list_prompts(user: User) -> list[PromptResponse]:

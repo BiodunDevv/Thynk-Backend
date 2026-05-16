@@ -1,0 +1,6 @@
+Hello {{ name }},
+
+Your Thynk payment was successful and your {{ plan }} plan is now active.
+
+If you closed the app during checkout, return to billing here:
+{{ manage_url }}

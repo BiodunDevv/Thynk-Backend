@@ -7,6 +7,7 @@ from app.core.constants import RequestChatSource, RequestChatStatus
 
 class RequestChatMessagePayload(BaseModel):
     content: str = Field(..., min_length=1)
+    image_urls: list[str] = []
 
 
 class RequestChatCreateRequest(BaseModel):
@@ -14,6 +15,7 @@ class RequestChatCreateRequest(BaseModel):
     category: str
     source: RequestChatSource = RequestChatSource.ASSISTANT_CHAT
     message: str = Field(..., min_length=1)
+    image_urls: list[str] = []
 
 
 class RequestChatUpdateRequest(BaseModel):
@@ -50,3 +52,5 @@ class RequestChatResponse(BaseModel):
     is_favorite: bool
     is_reported: bool
     reported_reason: str | None = None
+    created_at: datetime | None = None
+    updated_at: datetime | None = None

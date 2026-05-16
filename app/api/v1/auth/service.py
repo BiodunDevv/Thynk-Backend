@@ -21,6 +21,8 @@ from app.repositories.user_repository import UserRepository
 from app.services.auth.otp_service import OTPService
 from app.services.auth.token_service import TokenService
 from app.services.email.email_service import EmailService
+from app.services.notifications.notification_service import NotificationService
+from app.api.v1.payments.service import reconcile_user_billing_state
 from app.utils.datetime import ensure_utc, utc_now
 from app.utils.validators import normalize_email
 
@@ -28,6 +30,7 @@ user_repo = UserRepository()
 otp_service = OTPService()
 token_service = TokenService()
 email_service = EmailService()
+notification_service = NotificationService()
 
 
 def to_user_response(user: User) -> UserResponse:
@@ -78,6 +81,15 @@ async def verify_email(payload: OTPRequest) -> dict:
         await email_service.send_welcome_email(user.email, user.full_name)
     except Exception:
         pass  # welcome email failure must never block verification
+    await notification_service.create_notification_once(
+        user,
+        "Email verified",
+        "Your account is now verified and ready to use.",
+        NotificationType.ACCOUNT,
+        dedupe_key=f"email_verified:{user.id}",
+        data={"event": "email_verified"},
+        send_push=True,
+    )
     return {"user": to_user_response(user)}
 
 
@@ -114,13 +126,7 @@ async def login_user(payload: LoginRequest) -> dict:
     refresh_token, refresh_hash = token_service.create_refresh_token(user.id)
     user.refresh_token_hash = refresh_hash
     await user.save()
-    return {
-        "tokens": {"access_token": access_token, "refresh_token": refresh_token, "token_type": "bearer"},
-        "user": to_user_response(user),
-        "role": user.role.value,
-        "plan": {"plan_id": user.current_plan_id},
-        "subscription_status": user.subscription_status.value,
-    }
+    return await _build_auth_payload(user, access_token, refresh_token)
 
 
 async def admin_login(payload: LoginRequest) -> dict:
@@ -144,6 +150,52 @@ async def admin_login(payload: LoginRequest) -> dict:
     }
 
 
+async def _build_auth_payload(user: User, access_token: str, refresh_token: str) -> dict:
+    """Build the full auth response with live plan + subscription data."""
+    from app.models.plan import Plan
+
+    user, subscription, _ = await reconcile_user_billing_state(user)
+
+    # Resolve plan — prefer subscription's plan_id over user's current_plan_id
+    plan_id = (subscription.plan_id if subscription else None) or user.current_plan_id
+    plan = await Plan.get(plan_id) if plan_id else None
+
+    plan_data: dict = {"plan_id": plan_id}
+    if plan:
+        plan_data = {
+            "plan_id": plan.id,
+            "name": plan.name,
+            "slug": plan.slug,
+            "price": plan.price,
+            "currency": plan.currency,
+            "billing_interval": plan.billing_interval,
+            "generation_limit": plan.generation_limit,
+            "can_use_premium_templates": plan.can_use_premium_templates,
+            "can_save_unlimited_prompts": plan.can_save_unlimited_prompts,
+            "priority_generation": plan.priority_generation,
+        }
+
+    subscription_data: dict = {}
+    if subscription:
+        subscription_data = {
+            "id": str(subscription.id),
+            "status": subscription.status.value,
+            "provider": subscription.provider,
+            "current_period_start": subscription.current_period_start.isoformat() if subscription.current_period_start else None,
+            "current_period_end": subscription.current_period_end.isoformat() if subscription.current_period_end else None,
+            "cancel_at_period_end": subscription.cancel_at_period_end,
+        }
+
+    return {
+        "tokens": {"access_token": access_token, "refresh_token": refresh_token, "token_type": "bearer"},
+        "user": to_user_response(user),
+        "role": user.role.value,
+        "plan": plan_data,
+        "subscription_status": user.subscription_status.value,
+        "subscription": subscription_data,
+    }
+
+
 async def refresh_login(payload: RefreshTokenRequest) -> dict:
     token_payload = decode_token(payload.refresh_token, refresh=True)
     user = await User.get(token_payload["sub"])
@@ -153,13 +205,7 @@ async def refresh_login(payload: RefreshTokenRequest) -> dict:
     refresh_token, refresh_hash = token_service.create_refresh_token(user.id)
     user.refresh_token_hash = refresh_hash
     await user.save()
-    return {
-        "tokens": {"access_token": access_token, "refresh_token": refresh_token, "token_type": "bearer"},
-        "user": to_user_response(user),
-        "role": user.role.value,
-        "plan": {"plan_id": user.current_plan_id},
-        "subscription_status": user.subscription_status.value,
-    }
+    return await _build_auth_payload(user, access_token, refresh_token)
 
 
 async def request_password_reset(payload: EmailOnlyRequest) -> None:

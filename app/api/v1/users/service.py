@@ -1,9 +1,19 @@
 from app.api.v1.common import UserResponse
+from app.api.v1.payments.service import reconcile_user_billing_state
 from app.api.v1.users.schemas import UpdateProfileRequest
 from app.models.user import User
+from app.services.notifications.notification_service import NotificationService
+from app.services.ai.usage_tracker import UsageTracker
+
+usage_tracker = UsageTracker()
+notification_service = NotificationService()
 
 
 async def get_profile(user: User) -> UserResponse:
+    await usage_tracker.sync_usage_window(user)
+    user, _, _ = await reconcile_user_billing_state(user)
+    await notification_service.ensure_subscription_notifications(user)
+    await notification_service.ensure_usage_notifications(user)
     return UserResponse.model_validate(user.model_dump())
 
 

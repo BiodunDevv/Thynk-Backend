@@ -1,3 +1,4 @@
+from datetime import datetime
 from typing import Any
 
 from pydantic import Field
@@ -12,7 +13,9 @@ class Notification(TimestampedDocument):
     body: str
     type: NotificationType
     data: dict[str, Any] = Field(default_factory=dict)
+    dedupe_key: str | None = None
     is_read: bool = False
+    read_at: datetime | None = None
 
     class Settings:
         name = "notifications"

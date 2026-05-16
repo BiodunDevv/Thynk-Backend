@@ -9,7 +9,7 @@ from app.api.v1.request_chats.schemas import (
     RequestChatResponse,
     RequestChatUpdateRequest,
 )
-from app.api.v1.request_chats.service import add_message, create_chat, delete_chat, favorite_chat, generate_final_prompt, get_chat, list_chats, regenerate_prompt, report_chat, update_chat
+from app.api.v1.request_chats.service import add_message, clear_chats, create_chat, delete_chat, favorite_chat, generate_final_prompt, get_chat, list_chats, regenerate_prompt, report_chat, update_chat
 from app.core.response import SuccessResponse
 from app.models.user import User
 
@@ -45,6 +45,12 @@ async def patch_chat(chat_id: str, payload: RequestChatUpdateRequest, user: User
 async def remove_chat(chat_id: str, user: User = Depends(get_current_user)):
     await delete_chat(user, chat_id)
     return SuccessResponse(message="Request chat deleted successfully.", data={})
+
+
+@router.delete("", response_model=SuccessResponse[dict], summary="Clear request chats", description="Soft deletes all of the logged-in user's request chats.")
+async def remove_all_chats(user: User = Depends(get_current_user)):
+    deleted_count = await clear_chats(user)
+    return SuccessResponse(message="Request chats cleared successfully.", data={"deleted_count": deleted_count})
 
 
 @router.post("/{chat_id}/favorite", response_model=SuccessResponse[RequestChatResponse], summary="Favorite request chat", description="Marks or unmarks a request chat as favorite.")

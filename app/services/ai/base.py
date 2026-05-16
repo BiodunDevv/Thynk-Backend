@@ -11,6 +11,13 @@ class AIProviderBase(ABC):
     ) -> dict:
         raise NotImplementedError
 
+    @abstractmethod
+    async def generate_clarification(
+        self,
+        chat_state: dict,
+    ) -> dict:
+        raise NotImplementedError
+
 
 def get_ai_service() -> AIProviderBase:
     from app.services.ai.azure_openai_service import AzureOpenAIService

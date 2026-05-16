@@ -3,13 +3,18 @@ import json
 from fastapi import APIRouter, Depends, Request
 
 from app.api.v1.auth.dependencies import get_current_user
-from app.api.v1.payments.schemas import InitializePaymentRequest, PaymentResponse
+from app.api.v1.payments.schemas import (
+    InitializePaymentRequest,
+    PaymentRecordResponse,
+    PaymentResponse,
+    PaymentVerificationResponse,
+)
 from app.api.v1.payments.service import (
     get_payment_provider_config,
     initialize_payment,
     my_payments,
     store_webhook,
-    verify_payment,
+    verify_payment_for_user,
 )
 from app.core.error_codes import ErrorCodes
 from app.core.exceptions import AppException
@@ -26,9 +31,9 @@ async def start_payment(payload: InitializePaymentRequest, user: User = Depends(
     return SuccessResponse(message="Payment initialized successfully.", data=await initialize_payment(user, payload))
 
 
-@router.get("/verify/{reference}", response_model=SuccessResponse[dict], summary="Verify payment", description="Verifies a payment reference with the configured provider.")
+@router.get("/verify/{reference}", response_model=SuccessResponse[PaymentVerificationResponse], summary="Verify payment", description="Verifies a payment reference with the configured provider and returns normalized billing state.")
 async def confirm_payment(reference: str, user: User = Depends(get_current_user)):
-    return SuccessResponse(message="Payment verified successfully.", data=await verify_payment(reference))
+    return SuccessResponse(message="Payment verified successfully.", data=await verify_payment_for_user(user, reference))
 
 
 @router.get("/providers/config", response_model=SuccessResponse[dict], summary="Get payment provider configuration", description="Returns webhook, callback, and provider configuration details for billing setup screens.")
@@ -72,23 +77,33 @@ async def stripe_webhook(request: Request):
     )
 
 
-@router.get("/me", response_model=SuccessResponse[list[PaymentResponse]], summary="List my payments", description="Returns the logged-in user's payment history.")
+@router.get("/me", response_model=SuccessResponse[list[PaymentRecordResponse]], summary="List my payments", description="Returns the logged-in user's normalized payment history.")
 async def list_my_payments(user: User = Depends(get_current_user)):
     return SuccessResponse(message="Payments fetched successfully.", data=await my_payments(user))
 
 
-@admin_router.get("", response_model=SuccessResponse[list[PaymentResponse]], summary="List all payments")
+@admin_router.get("", response_model=SuccessResponse[list[PaymentRecordResponse]], summary="List all payments")
 async def list_all_payments(_=Depends(require_role(role="SUPER_ADMIN"))):
     from app.models.payment import Payment
-    data = [PaymentResponse.model_validate(item.model_dump()) for item in await Payment.find_all().sort("-created_at").to_list()]
+    from app.models.plan import Plan
+    from app.api.v1.payments.service import _serialize_payment_record
+
+    payments = await Payment.find_all().sort("-created_at").to_list()
+    plan_ids = {payment.plan_id for payment in payments if payment.plan_id}
+    plans = [await Plan.get(plan_id) for plan_id in plan_ids]
+    plan_map = {plan.id: plan for plan in plans if plan}
+    data = [_serialize_payment_record(item, plan_map.get(item.plan_id)) for item in payments]
     return SuccessResponse(message="Payments fetched successfully.", data=data)
 
 
-@admin_router.get("/{payment_id}", response_model=SuccessResponse[PaymentResponse], summary="Get payment by ID")
+@admin_router.get("/{payment_id}", response_model=SuccessResponse[PaymentRecordResponse], summary="Get payment by ID")
 async def get_payment(payment_id: str, _=Depends(require_role(role="SUPER_ADMIN"))):
     from app.models.payment import Payment
+    from app.models.plan import Plan
+    from app.api.v1.payments.service import _serialize_payment_record
     from app.core.exceptions import AppException
     p = await Payment.get(payment_id)
     if not p:
         raise AppException(404, "Payment not found.", "NOT_FOUND")
-    return SuccessResponse(message="Payment fetched successfully.", data=PaymentResponse.model_validate(p.model_dump()))
+    plan = await Plan.get(p.plan_id) if p.plan_id else None
+    return SuccessResponse(message="Payment fetched successfully.", data=_serialize_payment_record(p, plan))

@@ -31,6 +31,18 @@ class EmailService:
     async def send_subscription_success(self, email: str, name: str, plan: str) -> dict:
         return await self._send(email, name, "Your Thynk subscription is active", "subscription_success.html", "subscription_success.txt", name=name, plan=plan)
 
+    async def send_payment_completion(self, email: str, name: str, plan: str, manage_url: str) -> dict:
+        return await self._send(
+            email,
+            name,
+            "Your Thynk payment was received",
+            "payment_completion.html",
+            "payment_completion.txt",
+            name=name,
+            plan=plan,
+            manage_url=manage_url,
+        )
+
     async def send_payment_failed(self, email: str, name: str) -> dict:
         return await self._send(email, name, "Payment issue on Thynk", "payment_failed.html", "payment_failed.txt", name=name)
 

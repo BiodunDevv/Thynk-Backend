@@ -1,10 +1,14 @@
+from app.api.v1.payments.service import reconcile_user_billing_state
 from app.api.v1.subscriptions.schemas import SubscriptionResponse
-from app.models.subscription import Subscription
 from app.models.user import User
+from app.services.notifications.notification_service import NotificationService
+
+notification_service = NotificationService()
 
 
 async def get_my_subscription(user: User) -> SubscriptionResponse | None:
-    if not user.subscription_id:
+    user, subscription, _ = await reconcile_user_billing_state(user)
+    if not subscription:
         return None
-    subscription = await Subscription.get(user.subscription_id)
-    return SubscriptionResponse.model_validate(subscription.model_dump()) if subscription else None
+    await notification_service.ensure_subscription_notifications(user)
+    return SubscriptionResponse.model_validate(subscription.model_dump(mode="json"))

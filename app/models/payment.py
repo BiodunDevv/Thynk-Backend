@@ -1,4 +1,5 @@
 from typing import Any
+from datetime import datetime
 
 from pydantic import Field
 
@@ -27,8 +28,14 @@ class Payment(TimestampedDocument):
 class PaymentWebhookEvent(TimestampedDocument):
     provider: str
     event_id: str
+    provider_reference: str | None = None
+    payment_id: str | None = None
+    processing_status: str = "accepted"
+    processing_message: str | None = None
+    transition_source: str | None = None
+    processed_at: datetime | None = None
     payload: dict[str, Any] = Field(default_factory=dict)
 
     class Settings:
         name = "payment_webhook_events"
-        indexes = ["provider", "event_id"]
+        indexes = ["provider", "event_id", "provider_reference", "payment_id"]
