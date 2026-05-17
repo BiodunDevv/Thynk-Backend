@@ -46,6 +46,8 @@ async def generate_clarification_for_chat(chat: RequestChat) -> ClarificationRes
         images = [{"image_url": url, "detail": "auto"} for url in image_urls]
         result = await ai_service.generate_clarification(chat_state, images=images if images else None)
         return ClarificationResult.model_validate(result)
+    except AppException:
+        raise
     except Exception:
         return fallback_clarification(chat)
 
@@ -158,6 +160,36 @@ def build_final_prompt_metadata(
     return metadata
 
 
+def latest_final_prompt_message(chat: RequestChat) -> RequestChatMessage | None:
+    for message in reversed(chat.messages):
+        if message.metadata.get("is_final"):
+            return message
+    return None
+
+
+def build_follow_up_answer_prompt(chat: RequestChat, user_question: str) -> str:
+    final_message = latest_final_prompt_message(chat)
+    final_prompt_content = final_message.content if final_message else ""
+    return (
+        f"{build_generation_context(chat)}\n\n"
+        "Latest generated final prompt:\n"
+        f"{final_prompt_content}\n\n"
+        "User follow-up question:\n"
+        f"{user_question.strip()}\n"
+    )
+
+
+def build_follow_up_answer_system_prompt() -> str:
+    return (
+        "You are Thynk's prompt support assistant. The user already has a generated prompt and is now asking a follow-up question about it. "
+        "Answer directly, clearly, and professionally. Focus on helping them understand, adapt, improve, or apply the generated prompt. "
+        "Do not ask new intake-style clarification questions unless absolutely necessary. Do not generate a brand-new final prompt unless the user explicitly asks for one. "
+        "Keep the response polished and structured. Format the answer in clean Markdown using only these sections when relevant: "
+        "## Answer, ## Why, and ## Suggested next step. "
+        "Use short bullets where useful, avoid fluff, and do not sound overly chatty."
+    )
+
+
 def chat_prefers_deep_thinking(chat: RequestChat) -> bool:
     for message in reversed(chat.messages):
         deep_thinking = message.metadata.get("deep_thinking")
@@ -218,12 +250,11 @@ async def create_chat(user: User, payload: RequestChatCreateRequest) -> RequestC
         source=payload.source,
         messages=[user_message],
     )
-    await chat.insert()
 
     clarification = await generate_clarification_for_chat(chat)
     assistant_message = create_assistant_clarification_message(clarification)
     chat.messages.append(assistant_message)
-    await chat.save()
+    await chat.insert()
     return serialize_chat(chat)
 
 
@@ -242,6 +273,8 @@ async def get_chat(user: User, chat_id: str) -> RequestChatResponse:
 
 
 async def add_message(user: User, chat_id: str, payload: RequestChatMessagePayload) -> RequestChatResponse:
+    from app.services.ai.base import get_ai_service
+
     chat = await RequestChat.get(chat_id)
     if not chat or chat.user_id != user.id:
         raise AppException(404, "Request chat not found.", ErrorCodes.CHAT_NOT_FOUND)
@@ -256,8 +289,30 @@ async def add_message(user: User, chat_id: str, payload: RequestChatMessagePaylo
         created_at=utc_now(),
     )
     chat.messages.append(user_message)
-    clarification = await generate_clarification_for_chat(chat)
-    assistant_message = create_assistant_clarification_message(clarification)
+    if latest_final_prompt_message(chat):
+        ai_service = get_ai_service()
+        image_urls = collect_all_image_urls(chat)
+        images = [{"image_url": url, "detail": "auto"} for url in image_urls]
+        result = await ai_service.generate_prompt(
+            prompt=build_follow_up_answer_prompt(chat, payload.content),
+            images=images if images else None,
+            system_prompt=build_follow_up_answer_system_prompt(),
+        )
+        assistant_message = RequestChatMessage(
+            id=uuid4().hex,
+            role="assistant",
+            content=result.get("content", "").strip(),
+            metadata={
+                "type": "follow_up_answer",
+                "deep_thinking": payload.deep_thinking,
+            },
+            token_usage=result.get("token_usage"),
+            model_used=result.get("model"),
+            created_at=utc_now(),
+        )
+    else:
+        clarification = await generate_clarification_for_chat(chat)
+        assistant_message = create_assistant_clarification_message(clarification)
     chat.messages.append(assistant_message)
     chat.updated_at = utc_now()
     await chat.save()

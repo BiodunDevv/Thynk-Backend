@@ -28,8 +28,29 @@ class ClarificationQuestion(BaseModel):
 class ClarificationResult(BaseModel):
     clarification_complete: bool = False
     next_action: NextAction = "ask_followup"
-    questions: list[ClarificationQuestion] = Field(default_factory=list, max_length=2)
+    questions: list[ClarificationQuestion] = Field(default_factory=list, max_length=1)
     reasoning_summary: str | None = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def normalize_action_aliases(cls, value):
+        if not isinstance(value, dict):
+            return value
+
+        next_action = value.get("next_action")
+        if isinstance(next_action, str):
+            normalized = next_action.strip().lower()
+            alias_map = {
+                "ask_questions": "ask_followup",
+                "ask_question": "ask_followup",
+                "follow_up": "ask_followup",
+                "followup": "ask_followup",
+                "ready": "ready_for_final_prompt",
+                "final_prompt": "ready_for_final_prompt",
+                "generate_final_prompt": "ready_for_final_prompt",
+            }
+            value["next_action"] = alias_map.get(normalized, normalized)
+        return value
 
     @model_validator(mode="after")
     def normalize_state(self) -> "ClarificationResult":

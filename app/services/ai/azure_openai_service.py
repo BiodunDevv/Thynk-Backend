@@ -1,6 +1,7 @@
 import json
+import logging
 
-import httpx
+from openai import APIConnectionError, APIStatusError, APITimeoutError, AsyncOpenAI
 
 from app.core.config import get_settings
 from app.core.error_codes import ErrorCodes
@@ -8,17 +9,172 @@ from app.core.exceptions import AppException
 from app.services.ai.base import AIProviderBase
 from app.services.ai.clarification_types import ClarificationResult
 
-try:
-    from langchain_core.messages import HumanMessage, SystemMessage
-    from langchain_core.prompts import ChatPromptTemplate
-    from langchain_openai import AzureChatOpenAI
+logger = logging.getLogger(__name__)
 
-    LANGCHAIN_AVAILABLE = True
-except ImportError:
-    LANGCHAIN_AVAILABLE = False
+
+def _safe_response_body(exc: APIStatusError) -> str:
+    body = exc.response.text.strip()
+    return body[:4000] if body else "<empty>"
+
+
+def _log_upstream_failure(
+    *,
+    stage: str,
+    endpoint: str,
+    deployment: str,
+    exc: Exception,
+    request_id: str | None = None,
+) -> None:
+    if isinstance(exc, APIStatusError):
+        request_id = request_id or exc.response.headers.get("x-request-id") or exc.response.headers.get("apim-request-id")
+        logger.error(
+            "azure_openai_request_failed stage=%s provider=azure_openai endpoint=%s deployment=%s status_code=%s request_id=%s response_body=%s",
+            stage,
+            endpoint,
+            deployment,
+            exc.status_code,
+            request_id or "-",
+            _safe_response_body(exc),
+        )
+        return
+
+    logger.error(
+        "azure_openai_request_failed stage=%s provider=azure_openai endpoint=%s deployment=%s error=%s",
+        stage,
+        endpoint,
+        deployment,
+        repr(exc),
+    )
+
+
+def _map_api_status_error(
+    *,
+    stage: str,
+    endpoint: str,
+    deployment: str,
+    exc: APIStatusError,
+) -> AppException:
+    _log_upstream_failure(stage=stage, endpoint=endpoint, deployment=deployment, exc=exc)
+    if exc.status_code == 400:
+        raise AppException(
+            502,
+            "Azure OpenAI rejected the request. Please confirm the Foundry base URL, deployment name, and request format.",
+            ErrorCodes.PROMPT_GENERATION_FAILED,
+            details={"provider": "azure_openai", "status_code": 400, "stage": stage},
+        ) from exc
+    if exc.status_code == 401:
+        raise AppException(
+            502,
+            "Azure OpenAI rejected the request. Please check the API key and Foundry endpoint configuration.",
+            ErrorCodes.PROMPT_GENERATION_FAILED,
+            details={"provider": "azure_openai", "status_code": 401, "stage": stage},
+        ) from exc
+    if exc.status_code == 404:
+        raise AppException(
+            502,
+            "Azure OpenAI deployment was not found. Please confirm the deployment name and Foundry endpoint.",
+            ErrorCodes.PROMPT_GENERATION_FAILED,
+            details={"provider": "azure_openai", "status_code": 404, "stage": stage},
+        ) from exc
+    if exc.status_code == 429:
+        raise AppException(
+            503,
+            "Azure OpenAI is rate limiting requests. Please try again shortly.",
+            ErrorCodes.SERVICE_UNAVAILABLE,
+            details={"provider": "azure_openai", "status_code": 429, "stage": stage},
+        ) from exc
+    raise AppException(
+        502,
+        "Azure OpenAI returned an unexpected error.",
+        ErrorCodes.PROMPT_GENERATION_FAILED,
+        details={"provider": "azure_openai", "status_code": exc.status_code, "stage": stage},
+    ) from exc
 
 
 class AzureOpenAIService(AIProviderBase):
+    def _get_client(self) -> tuple[AsyncOpenAI | None, str, str]:
+        settings = get_settings()
+        if not settings.azure_openai_api_key or not settings.azure_openai_endpoint:
+            return None, "", settings.azure_openai_deployment_name
+
+        endpoint = settings.azure_openai_base_url
+        client = AsyncOpenAI(
+            api_key=settings.azure_openai_api_key,
+            base_url=endpoint,
+            timeout=30,
+        )
+        return client, endpoint, settings.azure_openai_deployment_name
+
+    async def _create_chat_completion(
+        self,
+        *,
+        stage: str,
+        system_prompt: str,
+        user_prompt: str,
+        images: list[dict] | None = None,
+    ):
+        client, endpoint, deployment = self._get_client()
+        settings = get_settings()
+        if not client:
+            return None, endpoint, deployment
+
+        message_content: str | list[dict] = user_prompt
+        if images:
+            multimodal_content: list[dict] = [{"type": "text", "text": user_prompt}]
+            for image in images:
+                multimodal_content.append(
+                    {
+                        "type": "image_url",
+                        "image_url": {
+                            "url": image["image_url"],
+                            "detail": image.get("detail", "auto"),
+                        },
+                    }
+                )
+            message_content = multimodal_content
+
+        try:
+            response = await client.chat.completions.create(
+                model=deployment,
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": message_content},
+                ],
+                max_completion_tokens=settings.azure_openai_max_tokens,
+            )
+            return response, endpoint, deployment
+        except APIStatusError as exc:
+            _map_api_status_error(
+                stage=stage,
+                endpoint=endpoint,
+                deployment=deployment,
+                exc=exc,
+            )
+        except APITimeoutError as exc:
+            _log_upstream_failure(stage=stage, endpoint=endpoint, deployment=deployment, exc=exc)
+            raise AppException(
+                504,
+                "Azure OpenAI took too long to respond.",
+                ErrorCodes.SERVICE_UNAVAILABLE,
+                details={"provider": "azure_openai", "stage": stage},
+            ) from exc
+        except APIConnectionError as exc:
+            _log_upstream_failure(stage=stage, endpoint=endpoint, deployment=deployment, exc=exc)
+            raise AppException(
+                502,
+                "Unable to reach Azure OpenAI.",
+                ErrorCodes.SERVICE_UNAVAILABLE,
+                details={"provider": "azure_openai", "stage": stage},
+            ) from exc
+        except Exception as exc:
+            _log_upstream_failure(stage=stage, endpoint=endpoint, deployment=deployment, exc=exc)
+            raise AppException(
+                502,
+                "Azure OpenAI returned an unexpected error.",
+                ErrorCodes.PROMPT_GENERATION_FAILED,
+                details={"provider": "azure_openai", "stage": stage},
+            ) from exc
+
     async def generate_prompt(
         self,
         prompt: str,
@@ -33,103 +189,20 @@ class AzureOpenAIService(AIProviderBase):
                 "token_usage": 0,
             }
 
-        endpoint = settings.azure_openai_endpoint.rstrip("/")
-        url = (
-            f"{endpoint}/openai/deployments/"
-            f"{settings.azure_openai_deployment_name}/chat/completions"
+        response, _, deployment = await self._create_chat_completion(
+            stage="prompt_generation",
+            system_prompt=system_prompt
+            or "You are Thynk's AI prompt enhancement engine. Return polished, high-quality prompt output.",
+            user_prompt=prompt,
+            images=images,
         )
-        params = {"api-version": settings.azure_openai_api_version}
-        user_content: list[dict] = [{"type": "text", "text": prompt}]
-        for image in images or []:
-            user_content.append(
-                {
-                    "type": "image_url",
-                    "image_url": {
-                        "url": image["image_url"],
-                        "detail": image.get("detail", "auto"),
-                    },
-                }
-            )
-
-        payload = {
-            "messages": [
-                {
-                    "role": "system",
-                    "content": system_prompt
-                    or "You are Thynk's AI prompt enhancement engine. Return polished, high-quality prompt output.",
-                },
-                {"role": "user", "content": user_content},
-            ],
-            "max_tokens": settings.azure_openai_max_tokens,
-            "temperature": 0.7,
+        text = response.choices[0].message.content if response and response.choices else ""
+        usage = response.usage if response else None
+        return {
+            "content": text or "",
+            "model": deployment,
+            "token_usage": getattr(usage, "total_tokens", None),
         }
-
-        try:
-            async with httpx.AsyncClient(timeout=30) as client:
-                response = await client.post(
-                    url,
-                    params=params,
-                    headers={
-                        "api-key": settings.azure_openai_api_key,
-                        "Content-Type": "application/json",
-                    },
-                    json=payload,
-                )
-                response.raise_for_status()
-                data = response.json()
-                text = (
-                    data.get("choices", [{}])[0]
-                    .get("message", {})
-                    .get("content", "")
-                )
-                usage = data.get("usage", {})
-                return {
-                    "content": text,
-                    "model": settings.azure_openai_model_name,
-                    "token_usage": usage.get("total_tokens"),
-                }
-        except httpx.HTTPStatusError as exc:
-            if exc.response.status_code == 401:
-                raise AppException(
-                    502,
-                    "Azure OpenAI rejected the request. Please check the API key, endpoint, deployment, and API version.",
-                    ErrorCodes.PROMPT_GENERATION_FAILED,
-                    details={"provider": "azure_openai", "status_code": 401},
-                ) from exc
-            if exc.response.status_code == 404:
-                raise AppException(
-                    502,
-                    "Azure OpenAI deployment was not found. Please confirm the deployment name and endpoint.",
-                    ErrorCodes.PROMPT_GENERATION_FAILED,
-                    details={"provider": "azure_openai", "status_code": 404},
-                ) from exc
-            if exc.response.status_code == 429:
-                raise AppException(
-                    503,
-                    "Azure OpenAI is rate limiting requests. Please try again shortly.",
-                    ErrorCodes.SERVICE_UNAVAILABLE,
-                    details={"provider": "azure_openai", "status_code": 429},
-                ) from exc
-            raise AppException(
-                502,
-                "Azure OpenAI returned an unexpected error.",
-                ErrorCodes.PROMPT_GENERATION_FAILED,
-                details={"provider": "azure_openai", "status_code": exc.response.status_code},
-            ) from exc
-        except httpx.TimeoutException as exc:
-            raise AppException(
-                504,
-                "Azure OpenAI took too long to respond.",
-                ErrorCodes.SERVICE_UNAVAILABLE,
-                details={"provider": "azure_openai"},
-            ) from exc
-        except httpx.HTTPError as exc:
-            raise AppException(
-                502,
-                "Unable to reach Azure OpenAI.",
-                ErrorCodes.SERVICE_UNAVAILABLE,
-                details={"provider": "azure_openai"},
-            ) from exc
 
     async def generate_clarification(self, chat_state: dict, images: list[dict] | None = None) -> dict:
         settings = get_settings()
@@ -153,92 +226,29 @@ class AzureOpenAIService(AIProviderBase):
                 ],
             ).model_dump()
 
-        if not LANGCHAIN_AVAILABLE:
-            result = await self.generate_prompt(
-                prompt=json.dumps(chat_state, ensure_ascii=False, indent=2),
-                images=images,
-                system_prompt=(
-                    "You are Thynk's clarification engine. Decide whether the conversation needs follow-up questions "
-                    "before generating a final prompt. Return JSON only with keys: clarification_complete, next_action, "
-                    "questions, reasoning_summary. If questions are needed, return 1-2 focused questions using types "
-                    "single, multi, yesno, or open. If images are attached and the user has not specified whether to follow "
-                    "their visual style, palette, or composition, prioritize one clarification question about how the image "
-                    "should influence the final prompt."
-                ),
-            )
-            try:
-                return ClarificationResult.model_validate_json(result.get("content", "")).model_dump()
-            except Exception:
-                return ClarificationResult(
-                    clarification_complete=False,
-                    next_action="ask_followup",
-                    questions=[
-                        {
-                            "type": "open",
-                            "question": "What result should this prompt help you produce?",
-                        }
-                    ],
-                ).model_dump()
-
-        llm = AzureChatOpenAI(
-            api_key=settings.azure_openai_api_key,
-            azure_endpoint=settings.azure_openai_endpoint.rstrip("/"),
-            api_version=settings.azure_openai_api_version,
-            azure_deployment=settings.azure_openai_deployment_name,
-            temperature=0.2,
-            max_tokens=settings.azure_openai_max_tokens,
+        result = await self.generate_prompt(
+            prompt=json.dumps(chat_state, ensure_ascii=False, indent=2),
+            images=images,
+            system_prompt=(
+                "You are Thynk's clarification engine. Decide whether the conversation needs follow-up questions "
+                "before generating a final prompt. Return JSON only with keys: clarification_complete, next_action, "
+                "questions, reasoning_summary. If questions are needed, return exactly 1 focused question using types "
+                "single, multi, yesno, or open. If enough context already exists, set clarification_complete to true "
+                "and next_action to ready_for_final_prompt. If images are attached and the user has not specified whether "
+                "to follow their visual style, palette, or composition, prioritize one clarification question about how the image "
+                "should influence the final prompt."
+            ),
         )
-
-        structured_llm = llm.with_structured_output(ClarificationResult)
-        prompt = ChatPromptTemplate.from_messages(
-            [
-                (
-                    "system",
-                    "You are Thynk's clarification engine. Read the full chat state and decide whether "
-                    "follow-up questions are still needed before generating the final prompt. "
-                    "Ask at most two focused questions. Prefer structured, practical questions that reduce ambiguity. "
-                    "If images are attached, decide whether you still need to ask how their layout, palette, brand cues, or style "
-                    "should influence the final prompt. If enough context already exists, mark clarification_complete true "
-                    "and next_action ready_for_final_prompt.",
-                ),
-                (
-                    "human",
-                    "Chat state:\n{chat_state}",
-                ),
-            ]
-        )
-
         try:
-            chain = prompt | structured_llm
-            chat_state_text = json.dumps(chat_state, ensure_ascii=False, indent=2)
-
-            # If images are attached, build a multimodal human message so the model can see them
-            if images:
-                system_msg = SystemMessage(content=(
-                    "You are Thynk's clarification engine. Read the full chat state and decide whether "
-                    "follow-up questions are still needed before generating the final prompt. "
-                    "Ask at most two focused questions. Prefer structured, practical questions that reduce ambiguity. "
-                    "If images are attached, decide whether you still need to ask how their layout, palette, brand cues, or style "
-                    "should influence the final prompt. If enough context already exists, mark clarification_complete true "
-                    "and next_action ready_for_final_prompt."
-                ))
-                human_content: list[dict] = [{"type": "text", "text": f"Chat state:\n{chat_state_text}"}]
-                for img in images:
-                    human_content.append({
-                        "type": "image_url",
-                        "image_url": {"url": img["image_url"], "detail": img.get("detail", "auto")},
-                    })
-                result = await structured_llm.ainvoke([system_msg, HumanMessage(content=human_content)])
-            else:
-                result = await chain.ainvoke({"chat_state": chat_state_text})
-
-            if isinstance(result, ClarificationResult):
-                return result.model_dump()
-            return ClarificationResult.model_validate(result).model_dump()
+            return ClarificationResult.model_validate_json(result.get("content", "")).model_dump()
         except Exception as exc:
+            logger.warning(
+                "azure_openai_clarification_parse_failed provider=azure_openai stage=clarification content=%s",
+                (result.get("content", "") or "")[:2000],
+            )
             raise AppException(
                 502,
                 "Thynk could not generate clarification questions right now.",
                 ErrorCodes.PROMPT_GENERATION_FAILED,
-                details={"provider": "azure_openai", "stage": "clarification"},
+                details={"provider": "azure_openai", "stage": "clarification", "reason": "invalid_json"},
             ) from exc

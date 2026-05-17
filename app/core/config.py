@@ -1,4 +1,5 @@
 from functools import lru_cache
+from urllib.parse import urlparse
 
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -76,6 +77,22 @@ class Settings(BaseSettings):
     @property
     def default_payment_callback_url(self) -> str:
         return f"{self.frontend_url.rstrip('/')}/settings?tab=billing&payment=return"
+
+    @property
+    def azure_openai_base_url(self) -> str:
+        cleaned = self.azure_openai_endpoint.strip().rstrip("/")
+        if not cleaned:
+            return ""
+
+        parsed = urlparse(cleaned)
+        path = parsed.path.rstrip("/")
+        if path.endswith("/responses"):
+            path = path[: -len("/responses")]
+        if path.endswith("/chat/completions"):
+            path = path[: -len("/chat/completions")]
+        if not path.endswith("/openai/v1"):
+            path = f"{path}/openai/v1".rstrip("/")
+        return parsed._replace(path=path).geturl().rstrip("/")
 
 
 @lru_cache

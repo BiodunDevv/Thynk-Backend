@@ -175,7 +175,7 @@ async def test_ai_provider(raw_prompt: str, images: list[PromptImageInput] | Non
         provider=settings.ai_provider,
         model=result.get("model", "unknown"),
         deployment=settings.azure_openai_deployment_name,
-        endpoint=settings.azure_openai_endpoint,
+        endpoint=settings.azure_openai_base_url,
         api_version=settings.azure_openai_api_version,
         image_count=len(images or []),
         output=result.get("content", ""),

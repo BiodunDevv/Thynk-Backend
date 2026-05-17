@@ -127,6 +127,16 @@ SUPER_ADMIN_PASSWORD
 SUPER_ADMIN_NAME
 ```
 
+Azure AI Foundry note:
+- `AZURE_OPENAI_ENDPOINT` must be the OpenAI-compatible base URL, for example:
+  - `https://biodundev.services.ai.azure.com/openai/v1`
+- Do not include a full target path such as `/responses` or `/chat/completions`.
+- Use the deployment/model name in both:
+  - `AZURE_OPENAI_DEPLOYMENT_NAME=gpt-5.3-chat`
+  - `AZURE_OPENAI_MODEL_NAME=gpt-5.3-chat`
+
+If Azure rejects a request, Thynk logs the request stage, normalized endpoint, deployment name, upstream status code, and Azure response body in the backend terminal for easier debugging.
+
 5. Point your Next.js frontend domains into `ALLOWED_ORIGINS`
 6. Point your public API domain, for example `api.thynk.app`, to Azure
 7. Register payment webhooks using the final public API URLs
