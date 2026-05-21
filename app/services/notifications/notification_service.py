@@ -109,6 +109,12 @@ class NotificationService:
             await notification.save()
         return len(notifications)
 
+    async def delete_notification(self, user: User, notification_id: str) -> None:
+        notification = await Notification.get(notification_id)
+        if not notification or notification.user_id != user.id:
+            raise AppException(404, "Notification not found.", ErrorCodes.RESOURCE_NOT_FOUND)
+        await notification.delete()
+
     async def send_test_notification(self, user: User) -> Notification:
         return await self.create_notification(
             user,
@@ -126,8 +132,9 @@ class NotificationService:
         ).count()
         return {
             "unread_count": unread,
-            "registered_devices": len(user.expo_push_tokens),
-            "has_browser_token": any(token.startswith("web:") for token in user.expo_push_tokens),
+            "registered_devices": len(user.expo_push_tokens) + len(user.web_push_subscriptions),
+            "has_browser_token": bool(user.web_push_subscriptions),
+            "has_web_push_subscription": bool(user.web_push_subscriptions),
         }
 
     async def ensure_subscription_notifications(self, user: User) -> None:

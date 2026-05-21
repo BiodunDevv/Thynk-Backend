@@ -311,6 +311,7 @@ async def _sync_subscription_success(
                     "amount": payment.amount,
                     "currency": payment.currency,
                     "resolved_via": transition_source,
+                    "url": "/settings?tab=billing",
                 },
                 send_push=True,
             )
@@ -362,6 +363,7 @@ async def _sync_payment_failure(
                 "provider": payment.provider,
                 "plan_id": payment.plan_id,
                 "resolved_via": transition_source,
+                "url": f"/pay?plan={plan.slug if plan else ''}&source=payment-failed",
             },
             send_push=True,
         )

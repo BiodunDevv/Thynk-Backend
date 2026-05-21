@@ -51,6 +51,9 @@ class Settings(BaseSettings):
     expo_push_api_url: str = Field(
         default="https://exp.host/--/api/v2/push/send", alias="EXPO_PUSH_API_URL"
     )
+    web_push_vapid_public_key: str = Field(default="", alias="WEB_PUSH_VAPID_PUBLIC_KEY")
+    web_push_vapid_private_key: str = Field(default="", alias="WEB_PUSH_VAPID_PRIVATE_KEY")
+    web_push_vapid_subject: str = Field(default="mailto:support@thynk.app", alias="WEB_PUSH_VAPID_SUBJECT")
     frontend_url: str = Field(default="http://localhost:3000", alias="FRONTEND_URL")
     support_email: str = Field(default="support@thynk.app", alias="SUPPORT_EMAIL")
     allowed_origins: str = Field(default="*", alias="ALLOWED_ORIGINS")

@@ -315,6 +315,7 @@ async def grant_credits(user_id: str, payload: GrantCreditsRequest, admin: User 
             "amount": payload.amount,
             "reason": payload.reason,
             "granted_by_admin_id": admin.id,
+            "url": "/settings?tab=billing",
         },
         send_push=True,
     )
@@ -346,6 +347,7 @@ async def grant_prompts(user_id: str, payload: GrantPromptsRequest, admin: User 
             "amount": payload.amount,
             "reason": payload.reason,
             "granted_by_admin_id": admin.id,
+            "url": "/workspace",
         },
         send_push=True,
     )

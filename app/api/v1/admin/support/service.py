@@ -44,7 +44,13 @@ async def admin_reply(admin: User, ticket_id: str, payload: AdminReplyRequest) -
         user = await User.get(ticket.user_id)
         if user:
             await email_service.send_support_ticket_reply(ticket.email, ticket.full_name, ticket.ticket_number, payload.message[:120])
-            await push_service.notify_user(user, "Support replied to your ticket", "Our team has responded to your request.", NotificationType.SUPPORT, {"ticket_id": ticket.id})
+            await push_service.notify_user(
+                user,
+                "Support replied to your ticket",
+                "Our team has responded to your request.",
+                NotificationType.SUPPORT,
+                {"ticket_id": ticket.id, "url": "/support"},
+            )
     return {"ticket_id": ticket.id}
 
 

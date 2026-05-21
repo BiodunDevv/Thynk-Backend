@@ -50,6 +50,7 @@ NEXT_PUBLIC_APP_NAME=Thynk
 NEXT_PUBLIC_API_BASE_URL=http://127.0.0.1:8000
 NEXT_PUBLIC_API_V1_PREFIX=/api/v1
 NEXT_PUBLIC_SITE_URL=http://127.0.0.1:3000
+NEXT_PUBLIC_WEB_PUSH_VAPID_PUBLIC_KEY=<your-public-vapid-key>
 ```
 
 That matches the local backend server output:
@@ -120,6 +121,9 @@ PAYSTACK_WEBHOOK_SECRET
 STRIPE_SECRET_KEY
 STRIPE_WEBHOOK_SECRET
 FRONTEND_URL
+WEB_PUSH_VAPID_PUBLIC_KEY
+WEB_PUSH_VAPID_PRIVATE_KEY
+WEB_PUSH_VAPID_SUBJECT
 ALLOWED_ORIGINS
 SUPPORT_EMAIL
 SUPER_ADMIN_EMAIL
@@ -136,6 +140,19 @@ Azure AI Foundry note:
   - `AZURE_OPENAI_MODEL_NAME=gpt-5.3-chat`
 
 If Azure rejects a request, Thynk logs the request stage, normalized endpoint, deployment name, upstream status code, and Azure response body in the backend terminal for easier debugging.
+
+Web push note:
+- Background browser notifications use the standard Push API + VAPID flow.
+- The frontend must expose `NEXT_PUBLIC_WEB_PUSH_VAPID_PUBLIC_KEY`.
+- The backend must expose:
+  - `WEB_PUSH_VAPID_PUBLIC_KEY`
+  - `WEB_PUSH_VAPID_PRIVATE_KEY`
+  - `WEB_PUSH_VAPID_SUBJECT`
+- Browser push subscriptions are registered through `/api/v1/notifications/web-push`.
+
+Checkout routing note:
+- `/pay` is the canonical web checkout route.
+- `/get-started` remains available as a compatibility redirect to `/pay`.
 
 5. Point your Next.js frontend domains into `ALLOWED_ORIGINS`
 6. Point your public API domain, for example `api.thynk.app`, to Azure

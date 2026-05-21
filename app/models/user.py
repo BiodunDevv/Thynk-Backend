@@ -1,10 +1,25 @@
 from datetime import datetime
 
 from beanie import Indexed
-from pydantic import EmailStr, Field
+from pydantic import BaseModel, EmailStr, Field
 
 from app.core.constants import SubscriptionStatus, UserRole
 from app.models.base import TimestampedDocument
+
+
+class WebPushSubscriptionKeys(BaseModel):
+    p256dh: str
+    auth: str
+
+
+class WebPushSubscription(BaseModel):
+    endpoint: str
+    expirationTime: int | None = None
+    keys: WebPushSubscriptionKeys
+    origin: str | None = None
+    user_agent: str | None = None
+    created_at: datetime | None = None
+    updated_at: datetime | None = None
 
 
 class User(TimestampedDocument):
@@ -16,6 +31,7 @@ class User(TimestampedDocument):
     is_active: bool = True
     avatar_url: str | None = None
     expo_push_tokens: list[str] = Field(default_factory=list)
+    web_push_subscriptions: list[WebPushSubscription] = Field(default_factory=list)
     current_plan_id: str | None = None
     subscription_status: SubscriptionStatus = SubscriptionStatus.FREE
     subscription_id: str | None = None

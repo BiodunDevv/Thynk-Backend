@@ -11,7 +11,7 @@ from app.api.v1.auth.schemas import (
     ResetPasswordRequest,
 )
 from app.core.config import get_settings
-from app.core.constants import NotificationType, OtpPurpose, SubscriptionStatus, UserRole
+from app.core.constants import OtpPurpose, SubscriptionStatus, UserRole
 from app.core.error_codes import ErrorCodes
 from app.core.exceptions import AppException
 from app.core.security import decode_token, hash_password, hash_token, verify_password
@@ -107,20 +107,8 @@ async def resend_verification_code(payload: EmailOnlyRequest) -> None:
 async def login_user(payload: LoginRequest) -> dict:
     user = await user_repo.get_by_email(normalize_email(payload.email))
     settings = get_settings()
-    if not user:
-        raise AppException(
-            401,
-            "No account found with that email address.",
-            ErrorCodes.AUTH_INVALID_CREDENTIALS,
-            field_errors=[{"field": "email", "message": "No account found with this email address."}],
-        )
-    if not verify_password(payload.password, user.password_hash):
-        raise AppException(
-            401,
-            "Incorrect password. Please try again.",
-            ErrorCodes.AUTH_INVALID_CREDENTIALS,
-            field_errors=[{"field": "password", "message": "The password you entered is incorrect."}],
-        )
+    if not user or not verify_password(payload.password, user.password_hash):
+        raise AppException(401, "Invalid email or password.", ErrorCodes.AUTH_INVALID_CREDENTIALS)
     if user.role == UserRole.SUPER_ADMIN:
         raise AppException(403, "Admin accounts must sign in through the admin portal.", ErrorCodes.AUTH_ACCOUNT_DISABLED)
     if not user.is_verified:

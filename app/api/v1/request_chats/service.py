@@ -8,6 +8,7 @@ from app.api.v1.request_chats.schemas import (
     RequestChatResponse,
     RequestChatUpdateRequest,
 )
+from app.core.constants import NotificationType
 from app.core.error_codes import ErrorCodes
 from app.core.exceptions import AppException
 from app.models.request_chat import RequestChat, RequestChatMessage
@@ -21,9 +22,11 @@ from app.services.ai.clarification_service import (
 )
 from app.services.ai.clarification_types import ClarificationResult
 from app.services.ai.usage_tracker import UsageTracker
+from app.services.notifications.notification_service import NotificationService
 from app.utils.datetime import utc_now
 
 usage_tracker = UsageTracker()
+notification_service = NotificationService()
 
 PROMPT_SECTION_PATTERN = re.compile(r"## Prompt\s*([\s\S]*?)(?=\n## |\s*$)", re.IGNORECASE)
 WHY_SECTION_PATTERN = re.compile(r"## Why this works\s*([\s\S]*?)(?=\n## |\s*$)", re.IGNORECASE)
@@ -353,6 +356,20 @@ async def generate_final_prompt(user: User, chat_id: str, deep_thinking: bool = 
     chat.messages.append(assistant_message)
     chat.updated_at = utc_now()
     await chat.save()
+    await notification_service.create_notification(
+        user,
+        "Prompt ready",
+        f"Your prompt for “{chat.title}” is ready.",
+        NotificationType.SYSTEM,
+        data={
+            "event": "request_chat_final_prompt_ready",
+            "chat_id": chat.id,
+            "message_id": assistant_message.id,
+            "deep_thinking": effective_deep_thinking,
+            "url": f"/workspace?chat={chat.id}",
+        },
+        send_push=True,
+    )
     return serialize_chat(chat)
 
 
@@ -402,6 +419,21 @@ async def regenerate_prompt(user: User, chat_id: str, variation_hint: str | None
     chat.messages.append(assistant_message)
     chat.updated_at = utc_now()
     await chat.save()
+    await notification_service.create_notification(
+        user,
+        "New prompt variation ready",
+        f"A new prompt variation for “{chat.title}” is available.",
+        NotificationType.SYSTEM,
+        data={
+            "event": "request_chat_prompt_variation_ready",
+            "chat_id": chat.id,
+            "message_id": assistant_message.id,
+            "variation_hint": variation_hint,
+            "deep_thinking": effective_deep_thinking,
+            "url": f"/workspace?chat={chat.id}",
+        },
+        send_push=True,
+    )
     return serialize_chat(chat)
 
 
